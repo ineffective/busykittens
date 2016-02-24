@@ -1,30 +1,90 @@
 function jda_busy_kittens_initialise() {
 	window.jda_busy_kittens = {
+		prices: {
+			checkPrices: function(prices) {
+				for (var x in prices) {
+					if (gamePage.resPool.get(prices[x].name).value < prices[x].val) {
+						return false;
+					}
+				}
+				return true;
+			}
+		},
+		workshop: {
+			auto: false,
+			buy: function(name) {
+				gamePage.tabs[3].render();
+				for (var x in gamePage.tabs[3].buttons) {
+					if (gamePage.tabs[3].buttons[x].name == name) {
+						gamePage.tabs[3].buttons[x].onClick();
+						gamePage.msg("AutoWorkshop: " + name, "notice", "autoworkshop");
+					}
+				}
+			},
+			findCandidate: function() {
+				if (this.auto !== true) {
+					return;
+				}
+				// simply run through the whole list and find something that's not bought:
+				for (var x in gamePage.workshop.upgrades) {
+					var upg = gamePage.workshop.get(gamePage.workshop.upgrades[x].name);
+					if (upg.unlocked && !upg.researched) {
+						// check prices
+						if (jda_busy_kittens.prices.checkPrices(upg.prices)) {
+							this.buy(upg.title);
+							return;
+						}
+					}
+				}
+			}
+		},
+		science: {
+			auto: false,
+			buy: function(name) {
+				gamePage.tabs[2].render();
+				for (var x in gamePage.tabs[2].buttons) {
+					if (gamePage.tabs[2].buttons[x].name == name) {
+						if (gamePage.tabs[2].buttons[x].enabled) {
+							gamePage.tabs[2].buttons[x].onClick();
+							gamePage.msg("AutoScience: " + name, "notice", "autoscience");
+						}
+						return;
+					}
+				}
+			},
+			findCandidate: function() {
+				if (this.auto !== true) {
+					return;
+				}
+				for (var x in gamePage.science.techs) {
+					var tech = gamePage.science.techs[x];
+					if (tech.unlocked && !tech.researched) {
+						if (jda_busy_kittens.prices.checkPrices(tech.prices)) {
+							this.buy(tech.title);
+							return;
+						}
+					}
+				}
+			}
+		},
 		hunt: {
+			auto: false,
 			toggle: function() {
 				if (this.huntInterval === null) {
 					this.huntInterval = setInterval(function() { game.village.huntAll(); }, this.huntMillis);
-					$('#bkahbutton').prop('value', "STOP HUNT");
 				} else {
 					clearInterval(this.huntInterval);
 					this.huntInterval = null;
-					$('#bkahbutton').prop('value', "START HUNT");
 				}
 			},
 			huntMillis: 2000,
 			huntInterval: null
 		},
 		praiseSun: {
-			toggle: function() {
-				if (this.praiseSun === false) {
-					$('#praiseSun').prop('value', "STOP AUTO-PRAISE");
-					this.praiseSun = true;
-				} else {
-					$('#praiseSun').prop('value', "START AUTO-PRAISE");
-					this.praiseSun = false;
-				}
-			},
 			praise: function() {
+				if (game.science.get("theology").researched !== true) {
+					return;
+				}
 				if (this.praiseSun === true) {
 					gamePage.religion.praise();
 				}
@@ -61,12 +121,8 @@ function jda_busy_kittens_initialise() {
 			reset: function() {
 				this.setRate(5);
 			},
-			faster: function(r) {
+			change: function(r) {
 				rate = gamePage.rate + r;
-				this.setRate(rate);
-			},
-			slower: function(r) {
-				rate = gamePage.rate - r;
 				if (gamePage.rate < 1) { gamePage.rate = 1; }
 				this.setRate(rate);
 			},
@@ -96,6 +152,9 @@ function jda_busy_kittens_initialise() {
 			resource_has: function(name) { return gamePage.resPool.get(name).value; },
 			resource_per_tick: function(name) {
 				var prod = gamePage.resPool.get(name).perTickUI;
+				if (prod === undefined || prod == 0) {
+					prod = this.crafts_data.by_name[name].produced_value;
+				}
 				return (prod === undefined) ? 0 : prod;
 			},
 			resource_get_max_time: function(res_needed) {
@@ -162,7 +221,7 @@ function jda_busy_kittens_initialise() {
 								label: ((bd[x].upgradable === true )? bd[x].stages[bd[x].stage || 0].label : bd[x].label),
 								group: 0,
 								stage: 0,
-								count: gamePage.bld.get(nm).val,
+								// count: gamePage.bld.get(nm).val,
 								limited: false,
 								needed: gamePage.bld.getPrices(nm) };
 								this.render_pending = true;
@@ -185,9 +244,6 @@ function jda_busy_kittens_initialise() {
 						this.global_reserved_resources[y] = reserve[y];
 					} else {
 						this.global_reserved_resources[y] += reserve[y];
-						// if (this.global_reserved_resources[y] < reserve[y]) {
-							// this.global_reserved_resources[y] = reserve[y];
-						// }
 					}
 				}
 			},
@@ -197,8 +253,6 @@ function jda_busy_kittens_initialise() {
 				// buildings in this group are added to the local_reserved_resources. when group checking is finished and
 				// nothing was selected for build, local_reserved_resources are added to global_reserved_resources and
 				// next group is checked. this is repeated for all groups.
-				// console.log("Global resources");
-				// console.log(this.global_reserved_resources);
 				var rv = null;
 				for (var x = this.groups.length - 1; x > 0; --x) { // > 0 since group 0 is "no-auto-build"
 					var local_reserved_resources = { };
@@ -224,10 +278,9 @@ function jda_busy_kittens_initialise() {
 					}
 					this.update_reserved_resources(local_reserved_resources);
 				}
-				// this.render_reserved_resources();
+				this.render_reserved_resources();
 				return rv;
 			},
-			log_autobuild_event: true,
 			build: function() {
 				this.render();
 				if (!this.do_auto_build) { return; }
@@ -244,9 +297,7 @@ function jda_busy_kittens_initialise() {
 				if (x.length > 0) {
 					x.click();
 					this.render_pending = true;
-					if (this.log_autobuild_event === true) {
-						gamePage.msg('AutoBuild: ' + candidate.label);
-					}
+					gamePage.msg('AutoBuild: ' + candidate.label, "notice", "autobuild");
 				}
 			},
 			groups: [],
@@ -256,7 +307,7 @@ function jda_busy_kittens_initialise() {
 				for (var x in this.buildings) {
 					var g = this.buildings[x].group;
 					this.buildings[x].needed = gamePage.bld.getPrices(x);
-					this.buildings[x].count = gamePage.bld.get(x).val;
+					// this.buildings[x].count = gamePage.bld.get(x).val;
 					var new_limited = this.is_limited(this.buildings[x]);
 					if (new_limited != this.buildings[x].limited) {
 						this.buildings[x].limited = new_limited;
@@ -290,7 +341,7 @@ function jda_busy_kittens_initialise() {
 				this.render_pending = false;
 				var s = "";
 				var i = this.groups.length;
-				s += "<ul>";
+				s += "<div><ul>";
 				for (var x = i - 1; x >= 0 ; x--) {
 					if (this.groups[x] === undefined || this.groups[x].length === 0) {
 						continue;
@@ -301,23 +352,22 @@ function jda_busy_kittens_initialise() {
 						var bb = this.groups[x].list[b];
 						s += "<li><div style='inline-block;'> "+ this.render_building_group_up_down_buttons(bb.name) + "<span id='jdabld" +
 						bb.name + "span' class='" + (bb.limited ? 'limited' : '') + "'>" +
-						bb.label + "</div></div></li>";
+						bb.label + "</span></div></li>";
 					}
 					s += "</ul></li>";
 				}
-				s += "</ul>";
-				$("#jda_busy_kittens_build").html(s);
+				s += "</ul></div>";
+				$("#jda_busy_kittens_build").append(s);
 			},
 			render_reserved_resources: function() {
-				s = "<table><tr>";
-				var row1 = ""; var row2 = "";
-				for (b in this.global_reserved_resources) {
-					row1 += "<td>" + b + "</td>";
-					row2 += "<td>" + this.global_reserved_resources[b].toFixed(2) + "</td>";
+				// first, reset reserved resources
+				for (var x in this.crafts_data.list) {
+					this.crafts_data.list[x].reserved.innerHTML = "0";
 				}
-				row1 += "</tr>"; row2 += "</tr>";
-				s += row1 + row2 + "</table>";
-				$("#jda_busy_kittens_reserved").html(s);
+				// now, update reserved resources
+				for (b in this.global_reserved_resources) {
+					this.crafts_data.by_name[b].reserved.innerHTML = this.global_reserved_resources[b].toFixed(0);
+				}
 			},
 			group_up: function(y) {
 				if (y === NaN) { return; }
@@ -422,6 +472,8 @@ function jda_busy_kittens_initialise() {
 				}
 				var crafts = gamePage.workshop.crafts;
 				for (var c in crafts) {
+					this.crafts_data.by_name[crafts[c].name].produced_value = 0;
+					this.crafts_data.by_name[crafts[c].name].produced.innerHTML = 0;
 					if (!crafts[c].unlocked) {
 						continue;
 					}
@@ -440,8 +492,14 @@ function jda_busy_kittens_initialise() {
 							break; // nothing to do here
 						}
 					}
-					if (toCraft !== Infinity && toCraft > 0) {
+					if (toCraft !== Infinity && toCraft > 0 && toCraft !== undefined) {
+						var pre = gamePage.resPool.get(crafts[c].name).value;
 						gamePage.craft(crafts[c].name, toCraft);
+						var post = gamePage.resPool.get(crafts[c].name).value;
+						var diff = post - pre;
+						//var prod_str = "pre: " + pre + "<br>post: " + post + "<br>diff: " + diff + "<br>req: " + toCraft;
+						this.crafts_data.by_name[crafts[c].name].produced_value = diff;
+						this.crafts_data.by_name[crafts[c].name].produced.innerHTML = diff.toFixed(0);
 						for (r in prices) {
 							available[prices[r].name] -= toCraft * prices[r].val;
 						}
@@ -461,33 +519,18 @@ function jda_busy_kittens_initialise() {
 			craft_table_visible: true,
 			toggle_craft_table: function(elem) {
 				if (this.craft_table_visible) {
-					elem.innerHTML = "[+]";
 					$("#jda_busy_kittens_craft_table").css({"display": "none"});
 				} else {
-					elem.innerHTML = "[-]";
 					$("#jda_busy_kittens_craft_table").css({"display": ""});
-				}
-				this.craft_table_visible = !this.craft_table_visible;
-			},
-			toggle_autobuild_logs: function(elem) {
-				if (this.log_autobuild_event === true) {
-					this.log_autobuild_event = false;
-					elem.innerHTML = "[Show autobuild logs]";
-				} else {
-					this.log_autobuild_event = true;
-					elem.innerHTML = "[Hide autobuild logs]";
 				}
 			},
 			build_table_visible: true,
 			toggle_build_table: function(elem) {
 				if (this.build_table_visible) {
-					elem.innerHTML = "[+]";
 					$("#jda_busy_kittens_build").css({"display" : "none"});
 				} else {
-					elem.innerHTML = "[-]";
 					$("#jda_busy_kittens_build").css({"display" : ""});
 				}
-				this.build_table_visible = !this.build_table_visible;
 			},
 			usedInCraft: function(name) {
 				var c = gamePage.workshop.crafts;
@@ -500,7 +543,16 @@ function jda_busy_kittens_initialise() {
 				}
 				return false;
 			},
+			save_crafts: function() {
+				var save_game = { };
+				for (var x in this.crafts_data.list) {
+					var c = this.crafts_data.list[x];
+					save_game[c.name] = { allowed: c.allowed, limit: c.limit };
+				}
+				LCstorage["kittensgame.busyKittensCrafts"] = JSON.stringify(save_game);
+			},
 			initialize_crafts: function() {
+				var saved_game = LCstorage["kittensgame.busyKittensCrafts"] ? JSON.parse(LCstorage["kittensgame.busyKittensCrafts"]) : { };
 				var tab = document.createElement("table");
 				var crafts = gamePage.resPool.resources;//.crafts;
 				var thead = tab.createTHead();
@@ -509,6 +561,8 @@ function jda_busy_kittens_initialise() {
 				row.insertCell(-1).innerHTML = "USE";
 				row.insertCell(-1).innerHTML = "CRAFT";
 				row.insertCell(-1).innerHTML = "LIMIT";
+				row.insertCell(-1).innerHTML = "RESERVED";
+				row.insertCell(-1).innerHTML = "PRODUCED";
 				for (var c in crafts) {
 					var unlocked = gamePage.workshop.getCraft(crafts[c].name);
 					if (unlocked === null) {
@@ -516,7 +570,18 @@ function jda_busy_kittens_initialise() {
 					} else {
 						unlocked = unlocked.unlocked; // sheesh!
 					}
-					this.crafts_data.list[c] = { prio: c, allowed: false, unlocked: unlocked, limit: 0, checkbox: null, input_limit: null };
+					this.crafts_data.list[c] = {
+						name: crafts[c].name,
+						prio: c,
+						allowed: saved_game[crafts[c].name] !== undefined ? saved_game[crafts[c].name].allowed : false,
+						unlocked: unlocked,
+						limit: saved_game[crafts[c].name] !== undefined ? saved_game[crafts[c].name].limit : 0,
+						checkbox: null,
+						input_limit: null,
+						produced_value: 0,
+						reserved: null,
+						produced: null
+					};
 					this.crafts_data.by_name[crafts[c].name] = this.crafts_data.list[c];
 					var cd = this.crafts_data.list[c];
 					// create element for this craft
@@ -527,8 +592,10 @@ function jda_busy_kittens_initialise() {
 						var avail = document.createElement("input");
 						avail.type = "checkbox";
 						avail.cd = this.crafts_data.list[c];
-						$(avail).bind("click", function(num) { return function() {
+						avail.checked = this.crafts_data.list[c].allowed;
+						$(avail).on("click", function(num) { return function() {
 							jda_busy_kittens.build.crafts_data.list[num].allowed = this.checked;
+							jda_busy_kittens.build.save_crafts();
 						}}(c));
 						$(row.insertCell(-1)).append(avail);
 					} else {
@@ -543,13 +610,20 @@ function jda_busy_kittens_initialise() {
 					input_limit.cd = this.crafts_data.list[c];
 					$(row.insertCell(-1)).append(input_limit);
 					var name = cd.name;
-					$(input_limit).bind("focusout", function(num) { return function() {
+					$(input_limit).on("focusout", function(num) { return function() {
 						jda_busy_kittens.build.crafts_data.list[num].limit = parseInt(this.value, 10);
 						if (jda_busy_kittens.build.crafts_data.list[num].limit < 0 || isNaN(jda_busy_kittens.build.crafts_data.list[num].limit)) {
 							jda_busy_kittens.build.crafts_data.list[num].limit = 0;
 						}
 						this.value = jda_busy_kittens.build.crafts_data.list[num].limit;
+						jda_busy_kittens.build.save_crafts();
 					}}(c));
+					var reserved_box = document.createElement("div");
+					cd.reserved = reserved_box;
+					$(row.insertCell(-1)).append(reserved_box);
+					var produced_box = document.createElement("div");
+					cd.produced = produced_box;
+					$(row.insertCell(-1)).append(produced_box);
 				}
 				$("#jda_busy_kittens_craft_table").append(tab);
 			},
@@ -558,46 +632,27 @@ function jda_busy_kittens_initialise() {
 				if (this.do_auto_build === false) {
 					this.render_pending = true;
 					this.render();
-					$('#jd_busy_kittens_build_toggle').prop('value', 'TURN OFF AUTO-BUILD');
 				} else {
 					this.render_pending = true;
 					this.render();
-					$('#jd_busy_kittens_build_toggle').prop('value', 'TURN ON AUTO-BUILD');
 				}
-				this.do_auto_build = !this.do_auto_build;
 			},
 			do_auto_craft: false,
-			toggle_auto_craft: function() {
-				if (this.do_auto_craft === false) {
-					$("#jda_busy_kittens_craft_toggle").prop("value", "STOP AUTO-CRAFT");
-					this.do_auto_craft = true;
-				} else {
-					$("#jda_busy_kittens_craft_toggle").prop("value", "START AUTO-CRAFT");
-					this.do_auto_craft = false;
-				}
-			},
 			register_tick_handler: function() {
 				gamePage.originalTick = gamePage.tick;
 				gamePage.tick = function() {
 					gamePage.originalTick();
 					if (jda_busy_kittens.build.autoObserve === true) {
-						$("#gameLog").find("input").click();
+						$('#observeBtn').click();
 					}
 					jda_busy_kittens.build.build();
 					jda_busy_kittens.build.craft();
 					jda_busy_kittens.praiseSun.praise();
+					jda_busy_kittens.workshop.findCandidate();
+					jda_busy_kittens.science.findCandidate();
 				};
 			},
 			autoObserve: false,
-			toggle_auto_observe: function() {
-				if (this.autoObserve === true) {
-					this.autoObserve = false;
-					$("#jda_busy_kittens_toggle_auto_observe").prop("value", "START AUTO-OBSERVE");
-				} else {
-					this.autoObserve = true;
-					$("#jda_busy_kittens_toggle_auto_observe").prop("value", "STOP AUTO-OBSERVE");
-				}
-			}
 		},
 		save: {
 			clear: function () {
@@ -624,6 +679,9 @@ function jda_busy_kittens_initialise() {
 				}
 			}
 		},
+		misc_opts: {
+			show: true
+		},
 		ui: {
 			css_list: {
 				main: "http://serwer1314723.home.pl/busy_kittens.css"
@@ -642,53 +700,79 @@ function jda_busy_kittens_initialise() {
 			},
 			build: function() {
 				$('#footerLinks').append(' | <a href="#" onclick="$(\'#autoDiv\').toggle();">BusyKittens</a>');
-
 				$('#importDiv').after('<div id="autoDiv" class="jda_help" style="display:none;">' +
 					'<div id="autoDivPane" style="width: 600px;overflow-x: hidden;">' +
-						'<div id="jda_busy_kittens_pin_tab" >[pin tab]</div>' +
-						'<div id="autoDivCont" ></div>' +
-						'<div id="jda_busy_kittens_build" />' +
+						'<div id="autoDivCont" ></div><br>' +
 					'</div>' + 
 				'</div>');
-				$("#autoDiv").bind("mouseover", function(event) { $("#autoDiv").addClass("fully_shown"); });
-				$("#autoDiv").bind("mouseout", function(event) { $("#autoDiv").removeClass("fully_shown"); });
-				$("#jda_busy_kittens_pin_tab").bind("click", function(event) {
-					if (event.target.pinned === undefined || event.target.pinned === false) {
-						$("#autoDiv").css({"width": "600px"});
-						this.pinned = true;
-						$("#jda_busy_kittens_pin_tab").html("[unpin tab]");
-					} else {
-						$("#jda_busy_kittens_pin_tab").html("[pin tab]");
-						$("#autoDiv").css({"width": ""});
-						this.pinned = false;
-					}});
-				$('#autoDivCont').append('<input id="praiseSun" type="button" value="START AUTO-PRAISE" href="#" onclick="jda_busy_kittens.praiseSun.toggle();"><br>');
-				$('#autoDivCont').append('<input id="bkahbutton" type="button" value="START HUNT" href="#" onclick="jda_busy_kittens.hunt.toggle();">');
-				$('#autoDivCont').append('<input id="bkahmillis" type="number" value="2000" href="#"><br>');
-				$('#bkahmillis').bind("focusout", function() {
+				$('#autoDivCont').append('<div id="autoMiscDiv" style="margin: 6px;">');
+				var btn5 = this.make_toggle_button("[ Hide miscellanious options ]", "[ Show miscellanious options ]", window.jda_busy_kittens.misc_opts, "show");
+				$('#autoMiscDiv').append(btn5);
+				$(btn5).on("click", function() { if (jda_busy_kittens.misc_opts.show === true) { $('#amdCont').css({ "display": "none" }); } else { $('#amdCont').css({"display": ""}); }});
+				$('#autoMiscDiv').append('<div style="width: 480px;border-style: solid; border-width: 1px; border-radius: 3px; margin: 3px;" id="amdCont">');
+				$('#amdCont').append(this.make_toggle_button("Auto-praise is OFF", "Auto-praise is ON", window.jda_busy_kittens.praiseSun, "praiseSun"));
+				$('#amdCont').append(this.make_toggle_button("Auto-science is OFF", "Auto-science is ON", window.jda_busy_kittens.science, "auto"));
+				$('#amdCont').append(this.make_toggle_button("Auto-Workshop is OFF", "Auto-workshop is ON", window.jda_busy_kittens.workshop, "auto"));
+				var btn6 = this.make_toggle_button("Auto-Hunt is OFF", "Auto-hunt is ON", window.jda_busy_kittens.hunt, "auto");
+				$(btn6).on("click", function() { jda_busy_kittens.hunt.toggle(); });
+				$('#amdCont').append(btn6);
+				$('#amdCont').append('<div style="text-indent: 25px;">Send hunters every <input id="bkahmillis" style="display: inline;" type="number" value="2000" href="#"> milliseconds.<br>');
+				$('#amdCont').on("focusout", function() {
 					jda_busy_kittens.hunt.huntMillis = parseInt(this.value, 10);
 					jda_busy_kittens.hunt.toggle();
 					jda_busy_kittens.hunt.toggle();
 				});
-				$('#autoDivCont').append('<input id="jda_busy_kittens_toggle_auto_observe" type="button" value="START AUTO-OBSERVE" href="#" onclick="jda_busy_kittens.build.toggle_auto_observe();"><br>');
-				$('#autoDivCont').append(
-					'<input type="button" value="+10" href="#" onclick="jda_busy_kittens.speed.faster(10);">' + 
-					'<input type="button" value="+5" href="#" onclick="jda_busy_kittens.speed.faster(5);">' + 
-					'<input type="button" value="+1" href="#" onclick="jda_busy_kittens.speed.faster(1);">' + 
+				$('#bkahbutton').on("click", function() { jda_busy_kittens.hunt.toggle(); });
+				$('#amdCont').append(this.make_toggle_button("Auto-observe is OFF", "Auto-observe is ON", window.jda_busy_kittens.build, "autoObserve"));
+				$('#amdCont').append(
+					'<input type="button" value="+10" href="#" onclick="jda_busy_kittens.speed.change(10);">' + 
+					'<input type="button" value="+5" href="#" onclick="jda_busy_kittens.speed.change(5);">' + 
+					'<input type="button" value="+1" href="#" onclick="jda_busy_kittens.speed.change(1);">' + 
 					'<input  type="button" id="gamespeedplaystop" href="#" value="STOP" onclick="jda_busy_kittens.speed.toggle();">' +
 					'<input type="button" value="STEP" href="#" onclick="jda_busy_kittens.speed.step_single_frame();">' +
-					'<span>SPEED: <span id="gamespeedcurrentrate">5</span></span>' +
-					'<input  type="button" href="#" value="-1" onclick="jda_busy_kittens.speed.slower(1);">' +
-					'<input  type="button" href="#" value="-5" onclick="jda_busy_kittens.speed.slower(5);">' +
-					'<input  type="button" href="#" value="-10" onclick="jda_busy_kittens.speed.slower(10);">' +
-					'&nbsp;&nbsp;&nbsp;<input type="button" href="#" value="RESET" onclick="jda_busy_kittens.speed.reset();"><br><br>' +
-					'<input id="jda_busy_kittens_craft_toggle" type="button" href="#" value="START AUTO-CRAFT" onclick="jda_busy_kittens.build.toggle_auto_craft();">' +
-					'<div onclick="jda_busy_kittens.build.toggle_craft_table(this);">[-]</div>' +
-					'<div id="jda_busy_kittens_craft_table"/>');
-				$('#autoDivCont').append('<br><input id="jd_busy_kittens_build_toggle" type="button" value="TURN ON AUTO-BUILD" onclick="jda_busy_kittens.build.toggle_auto_build(); return false;">');
-				$("#autoDivCont").append('<div onclick="jda_busy_kittens.build.toggle_build_table(this);">[-]</div>');
-				$('#autoDivCont').append('<div id="jd_build_show_log" onclick="jda_busy_kittens.build.toggle_autobuild_logs(this)">[Hide autobuild logs]</div><br />');
+					'<span>SPEED: <span id="gamespeedcurrentrate">5</span>&nbsp;</span>' +
+					'<input  type="button" href="#" value="-1" onclick="jda_busy_kittens.speed.change(-1);">' +
+					'<input  type="button" href="#" value="-5" onclick="jda_busy_kittens.speed.change(-5);">' +
+					'<input  type="button" href="#" value="-10" onclick="jda_busy_kittens.speed.change(-10);">' +
+					'&nbsp;&nbsp;&nbsp;<input type="button" href="#" value="RESET" onclick="jda_busy_kittens.speed.reset();"><br><br>');
+				var mydiff = $('#autoDivCont').append("<div><br>");
+				var btn3 = this.make_toggle_button("Auto-craft is OFF", "Auto-craft is ON", window.jda_busy_kittens.build, "do_auto_craft");
+				$(btn3).css("box-sizing", "border-box").css("float", "left");
+				$(mydiff).append(btn3);
+				
+				var btn2 = this.make_toggle_button("[ Hide craft table ]", "[ Show craft table ]", window.jda_busy_kittens.build, "craft_table_visible");
+				$(mydiff).append(btn2);
+				$(btn2).on("click", function() { jda_busy_kittens.build.toggle_craft_table(this); });
+				$(btn2).css("box-sizing", "border-box").css("float", "left");
+				$('#autoDivCont').append('<div id="jda_busy_kittens_craft_table"/>');
+				
+				var mydiff2 = $('#autoDivCont').append("<div><br>");
+				var btn = this.make_toggle_button("Auto-build is OFF", "Auto-build is ON", window.jda_busy_kittens.build, "do_auto_build");
+				$(btn).css("box-sizing", "border-box").css("float", "left");
+				$(mydiff2).append(btn);
+				$(btn).on("click", function() { jda_busy_kittens.build.toggle_auto_build(); });
+				var btn4 = this.make_toggle_button("[ Hide build table ]", "[ Show build table ]", window.jda_busy_kittens.build, "build_table_visible");
+				$(btn4).css("box-sizing", "border-box").css("float", "left");
+				$(mydiff2).append(btn4);
+				$(btn4).on("click", function() { jda_busy_kittens.build.toggle_build_table(this); });
+				$('#autoDivCont').append('<br><div id="jda_busy_kittens_build" />');
+				
 				this.load_csses();
+			},
+			make_toggle_button: function(name_on, name_off, target, target_var) {
+				var butt = document.createElement("div");
+				butt.style = "border-style: solid; border-width: 1px; border-radius: 3px; margin: 6px; width: 250px; text-align: center;";
+				butt.innerHTML = name_on;
+				$(butt).on("click", function() {
+					if (target[target_var] === false) {
+						this.innerHTML = name_off;
+						target[target_var] = true;
+					} else {
+						this.innerHTML = name_on;
+						target[target_var] = false;
+					}
+				});
+				return butt;
 			}
 		}
 	};
@@ -700,6 +784,10 @@ function jda_busy_kittens_initialise() {
 	gamePage.village.huntAll = function() {
 		jda_busy_kittens.huntAllOriginal.call(gamePage.village);
 	}
+	game.console.static.filters["autobuild"] = { title: "Auto-Build", enabled: true, unlocked: true };
+	game.console.static.filters["autoscience"] = { title: "Auto-Science", enabled: true, unlocked: true };
+	game.console.static.filters["autoworkshop"] = { title: "Auto-Workshop", enabled: true, unlocked: true };
+	game.console.static.renderFilters();
 }
 
 if (window.jda_busy_kittens === undefined) {
