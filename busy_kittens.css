@@ -1,0 +1,27 @@
+.jda_help {
+	position: absolute;
+	border: 1px solid black;
+	width: 600px;
+	height: 740px;
+
+	right: -0px;
+	top: 0%;
+
+	margin-top: 80px;
+	margin-left: 0px;
+
+	background-color: #FFF;
+	padding: 20px;
+	overflow-y:scroll;
+	overflow-x: hidden;
+}
+
+.fully_shown {
+	width: 600px;
+}
+
+.jdalnk  {
+  font-weight: bold;
+  font-size: 120%;
+  text-decoration: none;
+}

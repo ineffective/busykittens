@@ -357,7 +357,7 @@ function jda_busy_kittens_initialise() {
 					s += "</ul></li>";
 				}
 				s += "</ul></div>";
-				$("#jda_busy_kittens_build").append(s);
+				$("#jda_busy_kittens_build").empty().append(s);
 			},
 			render_reserved_resources: function() {
 				// first, reset reserved resources
@@ -705,9 +705,10 @@ function jda_busy_kittens_initialise() {
 						'<div id="autoDivCont" ></div><br>' +
 					'</div>' + 
 				'</div>');
-				$('#autoDivCont').append('<div id="autoMiscDiv" style="margin: 6px;">');
+				$('#autoDivCont').append(this.make_speed_control());
 				var btn5 = this.make_toggle_button("[ Hide miscellanious options ]", "[ Show miscellanious options ]", window.jda_busy_kittens.misc_opts, "show");
-				$('#autoMiscDiv').append(btn5);
+				$('#autoDivCont').append(btn5);
+				$('#autoDivCont').append('<div id="autoMiscDiv" style="margin: 3px;">');
 				$(btn5).on("click", function() { if (jda_busy_kittens.misc_opts.show === true) { $('#amdCont').css({ "display": "none" }); } else { $('#amdCont').css({"display": ""}); }});
 				$('#autoMiscDiv').append('<div style="width: 480px;border-style: solid; border-width: 1px; border-radius: 3px; margin: 3px;" id="amdCont">');
 				$('#amdCont').append(this.make_toggle_button("Auto-praise is OFF", "Auto-praise is ON", window.jda_busy_kittens.praiseSun, "praiseSun"));
@@ -724,7 +725,36 @@ function jda_busy_kittens_initialise() {
 				});
 				$('#bkahbutton').on("click", function() { jda_busy_kittens.hunt.toggle(); });
 				$('#amdCont').append(this.make_toggle_button("Auto-observe is OFF", "Auto-observe is ON", window.jda_busy_kittens.build, "autoObserve"));
-				$('#amdCont').append(
+				var mydiv = document.createElement("div");
+				$('#autoDivCont').append(mydiv);
+				var btn3 = this.make_toggle_button("Auto-craft is OFF", "Auto-craft is ON", window.jda_busy_kittens.build, "do_auto_craft");
+				$(btn3).css("box-sizing", "border-box").css("float", "left");
+				$(mydiv).append(btn3);
+				
+				var btn2 = this.make_toggle_button("[ Hide craft table ]", "[ Show craft table ]", window.jda_busy_kittens.build, "craft_table_visible");
+				$(mydiv).append(btn2);
+				$(btn2).on("click", function() { jda_busy_kittens.build.toggle_craft_table(this); });
+				$(btn2).css("box-sizing", "border-box").css("float", "left");
+				$(mydiv).append('<div style="clear: both">');
+				$('#autoDivCont').append('<div id="jda_busy_kittens_craft_table"/>');
+				
+				var mydiv2 = document.createElement("div");
+				$('#autoDivCont').append(mydiv2);
+				var btn = this.make_toggle_button("Auto-build is OFF", "Auto-build is ON", window.jda_busy_kittens.build, "do_auto_build");
+				$(btn).css("box-sizing", "border-box").css("float", "left");
+				$(mydiv2).append(btn);
+				$(btn).on("click", function() { jda_busy_kittens.build.toggle_auto_build(); });
+				var btn4 = this.make_toggle_button("[ Hide build table ]", "[ Show build table ]", window.jda_busy_kittens.build, "build_table_visible");
+				$(btn4).css("box-sizing", "border-box").css("float", "left");
+				$(mydiv2).append(btn4);
+				$(btn4).on("click", function() { jda_busy_kittens.build.toggle_build_table(this); });
+				$(mydiv2).append('<div style="clear: both">');
+				$('#autoDivCont').append('<div id="jda_busy_kittens_build" />');
+				
+				this.load_csses();
+			},
+			make_speed_control: function() {
+				return '<div style="border-style: solid; border-width: 1px; border-radius: 3px; margin: 3px;padding:5px;display:inline-block;">' + 
 					'<input type="button" value="+10" href="#" onclick="jda_busy_kittens.speed.change(10);">' + 
 					'<input type="button" value="+5" href="#" onclick="jda_busy_kittens.speed.change(5);">' + 
 					'<input type="button" value="+1" href="#" onclick="jda_busy_kittens.speed.change(1);">' + 
@@ -734,30 +764,7 @@ function jda_busy_kittens_initialise() {
 					'<input  type="button" href="#" value="-1" onclick="jda_busy_kittens.speed.change(-1);">' +
 					'<input  type="button" href="#" value="-5" onclick="jda_busy_kittens.speed.change(-5);">' +
 					'<input  type="button" href="#" value="-10" onclick="jda_busy_kittens.speed.change(-10);">' +
-					'&nbsp;&nbsp;&nbsp;<input type="button" href="#" value="RESET" onclick="jda_busy_kittens.speed.reset();"><br><br>');
-				var mydiff = $('#autoDivCont').append("<div><br>");
-				var btn3 = this.make_toggle_button("Auto-craft is OFF", "Auto-craft is ON", window.jda_busy_kittens.build, "do_auto_craft");
-				$(btn3).css("box-sizing", "border-box").css("float", "left");
-				$(mydiff).append(btn3);
-				
-				var btn2 = this.make_toggle_button("[ Hide craft table ]", "[ Show craft table ]", window.jda_busy_kittens.build, "craft_table_visible");
-				$(mydiff).append(btn2);
-				$(btn2).on("click", function() { jda_busy_kittens.build.toggle_craft_table(this); });
-				$(btn2).css("box-sizing", "border-box").css("float", "left");
-				$('#autoDivCont').append('<div id="jda_busy_kittens_craft_table"/>');
-				
-				var mydiff2 = $('#autoDivCont').append("<div><br>");
-				var btn = this.make_toggle_button("Auto-build is OFF", "Auto-build is ON", window.jda_busy_kittens.build, "do_auto_build");
-				$(btn).css("box-sizing", "border-box").css("float", "left");
-				$(mydiff2).append(btn);
-				$(btn).on("click", function() { jda_busy_kittens.build.toggle_auto_build(); });
-				var btn4 = this.make_toggle_button("[ Hide build table ]", "[ Show build table ]", window.jda_busy_kittens.build, "build_table_visible");
-				$(btn4).css("box-sizing", "border-box").css("float", "left");
-				$(mydiff2).append(btn4);
-				$(btn4).on("click", function() { jda_busy_kittens.build.toggle_build_table(this); });
-				$('#autoDivCont').append('<br><div id="jda_busy_kittens_build" />');
-				
-				this.load_csses();
+					'&nbsp;&nbsp;&nbsp;<input type="button" href="#" value="RESET" onclick="jda_busy_kittens.speed.reset();"></div>';
 			},
 			make_toggle_button: function(name_on, name_off, target, target_var) {
 				var butt = document.createElement("div");
