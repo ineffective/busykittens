@@ -1,13 +1,68 @@
 function jda_busy_kittens_initialise() {
 	window.jda_busy_kittens = {
 		prices: {
-			checkPrices: function(prices) {
-				for (var x in prices) {
-					if (gamePage.resPool.get(prices[x].name).value < prices[x].val) {
-						return false;
+			// this checks if building can be built. it also adds resources required to dict 'reserved_res'
+			// getResCurrAmt: get current amount of resource
+			getResCurrAmt: function(name) { return gamePage.resPool.get(name).value; },
+			// resProdPerTick: get resource production per tick
+			resProdPerTick: function(name) {
+				var prod = gamePage.resPool.get(name).perTickUI;
+				if (prod === undefined || prod == 0) {
+					prod = jda_busy_kittens.build.crafts_data.by_name[name].produced_value;
+				}
+				return (prod === undefined) ? 0 : prod;
+			},
+			// this function calculates time needed to produce required amount of resource
+			getTimeToProduce: function(res_needed) {
+				var max_time = 0;
+				for (var x in res_needed) {
+					var res = res_needed[x];
+					var needed = res.val;
+					var res_has = this.getResCurrAmt(res.name);
+					var res_time = Math.ceil((needed - res_has) / this.resProdPerTick(res.name));
+					max_time = Math.max(res_time, max_time);
+				}
+				return max_time;
+			},
+			checkBuyOrReserveResources: function(prices, glob_res, local_res) {
+				var rv = true; // by default assume that building can be built
+				var a = prices;//this.buildings[name].needed;
+				var res_time = this.getTimeToProduce(a);
+				if (res_time == Infinity) {
+					return false; // resource won't be ever built, since production is most probably 0
+				}
+				for (x in a) {
+					var needed = a[x].val; // amount of resources needed for construction
+					var res = this.getResCurrAmt(a[x].name); // amount of resource available
+					var prod = this.resProdPerTick(a[x].name); // amount of resource gained per tick
+					// now check how much time is needed to produce required amount of resource
+					var time_needed = Math.ceil((needed - res) / prod);
+					// now, if time is less then res_time, which is max time, we should reserve (res_time - time_needed) * prod less
+					// resource than we originally thought
+					if (time_needed < res_time) {
+						var tmp = (res_time - time_needed) * prod;
+						if (isNaN(tmp)) {
+							tmp = 0;
+						}
+						needed -= tmp;
+						if (needed < 0) { needed = 0; }
+					}
+					if (local_res[a[x].name] === undefined || local_res[a[x].name] < needed) {
+						local_res[a[x].name] = needed;
+					}
+					if (glob_res[a[x].name] !== undefined) {
+						// return false only if after buying this structure (res - needed < glob_res[a[x].name])
+						// we'll be left with less resources than required for higher priority structure
+						if (res - needed < glob_res[a[x].name]) {
+							rv = false;
+						}
+					} else {
+						if (res < needed) {
+							rv = false;
+						}
 					}
 				}
-				return true;
+				return rv;
 			}
 		},
 		workshop: {
@@ -22,20 +77,22 @@ function jda_busy_kittens_initialise() {
 				}
 			},
 			findCandidate: function() {
-				if (this.auto !== true) {
+				if (this.auto !== true || gamePage.tabs[3].visible !== true) {
 					return;
 				}
+				var local_reserved_resources = { };
 				// simply run through the whole list and find something that's not bought:
 				for (var x in gamePage.workshop.upgrades) {
 					var upg = gamePage.workshop.get(gamePage.workshop.upgrades[x].name);
 					if (upg.unlocked && !upg.researched) {
-						// check prices
-						if (jda_busy_kittens.prices.checkPrices(upg.prices)) {
+						// check prices and buy or reserve
+						if (jda_busy_kittens.prices.checkBuyOrReserveResources(upg.prices, jda_busy_kittens.build.global_reserved_resources, local_reserved_resources)) {
 							this.buy(upg.title);
 							return;
 						}
 					}
 				}
+				jda_busy_kittens.build.update_reserved_resources(local_reserved_resources);
 			}
 		},
 		science: {
@@ -53,18 +110,21 @@ function jda_busy_kittens_initialise() {
 				}
 			},
 			findCandidate: function() {
-				if (this.auto !== true) {
+				if (this.auto !== true || gamePage.tabs[2].visible === false) {
 					return;
 				}
+				var local_reserved_resources = { };
 				for (var x in gamePage.science.techs) {
 					var tech = gamePage.science.techs[x];
 					if (tech.unlocked && !tech.researched) {
-						if (jda_busy_kittens.prices.checkPrices(tech.prices)) {
+						var prices = gamePage.science.getPrices(tech);
+						if (jda_busy_kittens.prices.checkBuyOrReserveResources(prices, jda_busy_kittens.build.global_reserved_resources, local_reserved_resources)) {
 							this.buy(tech.title);
 							return;
 						}
 					}
 				}
+				jda_busy_kittens.build.update_reserved_resources(local_reserved_resources);
 			}
 		},
 		hunt: {
@@ -148,66 +208,8 @@ function jda_busy_kittens_initialise() {
 				}
 				return false;
 			},
-			// this checks if building can be built. it also adds resources required to dict 'reserved_res'
-			resource_has: function(name) { return gamePage.resPool.get(name).value; },
-			resource_per_tick: function(name) {
-				var prod = gamePage.resPool.get(name).perTickUI;
-				if (prod === undefined || prod == 0) {
-					prod = this.crafts_data.by_name[name].produced_value;
-				}
-				return (prod === undefined) ? 0 : prod;
-			},
-			resource_get_max_time: function(res_needed) {
-				var max_time = 0;
-				for (var x in res_needed) {
-					var res = res_needed[x];
-					var needed = res.val;
-					var res_has = this.resource_has(res.name);
-					var res_time = Math.ceil((needed - res_has) / this.resource_per_tick(res.name));
-					max_time = Math.max(res_time, max_time);
-				}
-				return max_time;
-			},
-			can_be_built: function(name, glob_res, local_res) {
-				var rv = true; // by default assume that building can be built
-				var a = this.buildings[name].needed;
-				var res_time = this.resource_get_max_time(a);
-				if (res_time == Infinity) {
-					return false; // resource won't be ever built, since production is most probably 0
-				}
-				for (x in a) {
-					var needed = a[x].val; // amount of resources needed for construction
-					var res = this.resource_has(a[x].name); // amount of resource available
-					var prod = this.resource_per_tick(a[x].name); // amount of resource gained per tick
-					// now check how much time is needed to produce required amount of resource
-					var time_needed = Math.ceil((needed - res) / prod);
-					// now, if time is less then res_time, which is max time, we should reserve (res_time - time_needed) * prod less
-					// resource than we originally thought
-					if (time_needed < res_time) {
-						var tmp = (res_time - time_needed) * prod;
-						if (isNaN(tmp)) {
-							tmp = 0;
-						}
-						needed -= tmp;
-						if (needed < 0) { needed = 0; }
-					}
-					if (local_res[a[x].name] === undefined || local_res[a[x].name] < needed) {
-						local_res[a[x].name] = needed;
-					}
-					if (glob_res[a[x].name] !== undefined) {
-						// return false only if after buying this structure (res - needed < glob_res[a[x].name])
-						// we'll be left with less resources than required for higher priority structure
-						if (res - needed < glob_res[a[x].name]) {
-							rv = false;
-						}
-					} else {
-						if (res < needed) {
-							rv = false;
-						}
-					}
-				}
-				return rv;
-			},
+
+
 			buildings: {},
 			render_pending: false,
 			rescan: function() {
@@ -221,23 +223,29 @@ function jda_busy_kittens_initialise() {
 								label: ((bd[x].upgradable === true )? bd[x].stages[bd[x].stage || 0].label : bd[x].label),
 								group: 0,
 								stage: 0,
+								unlocked: true,
 								// count: gamePage.bld.get(nm).val,
 								limited: false,
 								needed: gamePage.bld.getPrices(nm) };
 								this.render_pending = true;
-						} else if (bd[x].upgradable === true && bd[x].stage > this.buildings[nm].stage) {
+						} else if (bd[x].upgradable === true && bd[x].stage != this.buildings[nm].stage) {
 							this.buildings[nm].label = ((bd[x].upgradable === true )? bd[x].stages[bd[x].stage || 0].label : bd[x].label);
 							this.buildings[nm].stage = bd[x].stage;
 						}
+						this.buildings[nm].unlocked = true;
 					} else { // if buildings isn't unlocked but for some reason is on the list, remove
 						if (this.buildings[nm] !== undefined) {
-							delete this.buildings[nm];
-							this.render_pending = true;
+//							delete this.buildings[nm];
+							this.buildings[nm].unlocked = false;
+							// this.render_pending = true;
 						}
 					}
 				}
 			},
 			global_reserved_resources: { },
+			reset_reserved_resources: function() {
+				this.global_reserved_resources = { };
+			},
 			update_reserved_resources: function(reserve) {
 				for (y in reserve) {
 					if (this.global_reserved_resources[y] === undefined) {
@@ -247,12 +255,13 @@ function jda_busy_kittens_initialise() {
 					}
 				}
 			},
-			select_candidate: function() {
-				this.global_reserved_resources = { };
+			findCandidate: function() {
 				// in the beginning, both sets are empty. when single group is scanned, resources required by not capped
 				// buildings in this group are added to the local_reserved_resources. when group checking is finished and
 				// nothing was selected for build, local_reserved_resources are added to global_reserved_resources and
 				// next group is checked. this is repeated for all groups.
+				// NOTE: it has changed, since other things can reserve resources: workshop upgrades, science, in the future
+				// religion, space and whatever bloodrizer will throw at us poor automation lovers.
 				var rv = null;
 				for (var x = this.groups.length - 1; x > 0; --x) { // > 0 since group 0 is "no-auto-build"
 					var local_reserved_resources = { };
@@ -266,10 +275,10 @@ function jda_busy_kittens_initialise() {
 					// group is not limited (i.e. there is at least one building which is not res-capped)
 					for (var y = 0 ; y < g.list.length ; ++y) {
 						var i = y;
-						if (g.list[i].limited) {
+						if (g.list[i].limited || g.list[i].unlocked !== true) {
 							continue;
 						}
-						if (this.can_be_built(g.list[i].name, this.global_reserved_resources, local_reserved_resources) !== true) {
+						if (jda_busy_kittens.prices.checkBuyOrReserveResources(this.buildings[g.list[i].name].needed, this.global_reserved_resources, local_reserved_resources) !== true) {
 							continue;
 						}
 						if (rv === null) {
@@ -289,7 +298,7 @@ function jda_busy_kittens_initialise() {
 					return; // avoid building when game is paused or not working, but not when single stepping, since this leads to anomalies
 				}
 				if (gamePage.activeTabId !== "Bonfire") { return ; }
-				var candidate = this.select_candidate();
+				var candidate = this.findCandidate();
 				if (candidate === null) {
 					return;
 				}
@@ -307,7 +316,6 @@ function jda_busy_kittens_initialise() {
 				for (var x in this.buildings) {
 					var g = this.buildings[x].group;
 					this.buildings[x].needed = gamePage.bld.getPrices(x);
-					// this.buildings[x].count = gamePage.bld.get(x).val;
 					var new_limited = this.is_limited(this.buildings[x]);
 					if (new_limited != this.buildings[x].limited) {
 						this.buildings[x].limited = new_limited;
@@ -351,7 +359,7 @@ function jda_busy_kittens_initialise() {
 					for (b in this.groups[x].list) {
 						var bb = this.groups[x].list[b];
 						s += "<li><div style='inline-block;'> "+ this.render_building_group_up_down_buttons(bb.name) + "<span id='jdabld" +
-						bb.name + "span' class='" + (bb.limited ? 'limited' : '') + "'>" +
+						bb.name + "span' class='" + (bb.limited ? 'limited ' : '') + (bb.unlocked ? '' : ' disabled') + "'>" +
 						bb.label + "</span></div></li>";
 					}
 					s += "</ul></li>";
@@ -451,7 +459,7 @@ function jda_busy_kittens_initialise() {
 					return;
 				}
 				// if do_auto_build is false, structure construction is not requested. so reset global_reserved_resources to 0, so anything can be crafted.
-				if (this.do_auto_build === false) {
+				if (this.do_auto_build === false && jda_busy_kittens.workshop.auto === false && jda_busy_kittens.science.auto === false) {
 					this.global_reserved_resources = { };
 				}
 				// this function scans available crafts and compares them with global_reserved_resources. Since global_reserved_resources
@@ -645,11 +653,12 @@ function jda_busy_kittens_initialise() {
 					if (jda_busy_kittens.build.autoObserve === true) {
 						$('#observeBtn').click();
 					}
-					jda_busy_kittens.build.build();
-					jda_busy_kittens.build.craft();
+					jda_busy_kittens.build.reset_reserved_resources();
+					jda_busy_kittens.science.findCandidate(); // we assume that science is more important than workshop
+					jda_busy_kittens.workshop.findCandidate(); // and that workshop is more important than buildings
+					jda_busy_kittens.build.build(); // and that building things is more important than crafting
+					jda_busy_kittens.build.craft(); // and that crafting is more important than praising sun - ok, that's not true, but 
 					jda_busy_kittens.praiseSun.praise();
-					jda_busy_kittens.workshop.findCandidate();
-					jda_busy_kittens.science.findCandidate();
 				};
 			},
 			autoObserve: false,
