@@ -3,10 +3,10 @@ function jda_busy_kittens_initialise() {
 		prices: {
 			// this checks if building can be built. it also adds resources required to dict 'reserved_res'
 			// getResCurrAmt: get current amount of resource
-			getResCurrAmt: function(name) { return gamePage.resPool.get(name).value; },
+			getResCurrAmt: function(name) { return gamePage.resPool.get(name).value; }, // CHECKED
 			// resProdPerTick: get resource production per tick
 			resProdPerTick: function(name) {
-				var prod = gamePage.resPool.get(name).perTickUI;
+				var prod = gamePage.resPool.get(name).perTickCached; // CHECKED
 				if (prod === undefined || prod == 0) {
 					prod = jda_busy_kittens.build.crafts_data.by_name[name].produced_value;
 				}
@@ -70,7 +70,7 @@ function jda_busy_kittens_initialise() {
 			buy: function(name) {
 				gamePage.tabs[3].render();
 				for (var x in gamePage.tabs[3].buttons) {
-					if (gamePage.tabs[3].buttons[x].name == name) {
+					if (gamePage.tabs[3].buttons[x].id == name) { // CHECKED
 						gamePage.tabs[3].buttons[x].onClick();
 						gamePage.msg("AutoWorkshop: " + name, "notice", "autoworkshop");
 					}
@@ -87,7 +87,7 @@ function jda_busy_kittens_initialise() {
 					if (upg.unlocked && !upg.researched) {
 						// check prices and buy or reserve
 						if (jda_busy_kittens.prices.checkBuyOrReserveResources(upg.prices, jda_busy_kittens.build.global_reserved_resources, local_reserved_resources)) {
-							this.buy(upg.title);
+							this.buy(upg.name); // CHECKED
 							return;
 						}
 					}
@@ -100,8 +100,8 @@ function jda_busy_kittens_initialise() {
 			buy: function(name) {
 				gamePage.tabs[2].render();
 				for (var x in gamePage.tabs[2].buttons) {
-					if (gamePage.tabs[2].buttons[x].name == name) {
-						if (gamePage.tabs[2].buttons[x].enabled) {
+					if (gamePage.tabs[2].buttons[x].id == name) {
+						if (gamePage.tabs[2].buttons[x].model.enabled) {
 							gamePage.tabs[2].buttons[x].onClick();
 							gamePage.msg("AutoScience: " + name, "notice", "autoscience");
 						}
@@ -119,7 +119,7 @@ function jda_busy_kittens_initialise() {
 					if (tech.unlocked && !tech.researched) {
 						var prices = gamePage.science.getPrices(tech);
 						if (jda_busy_kittens.prices.checkBuyOrReserveResources(prices, jda_busy_kittens.build.global_reserved_resources, local_reserved_resources)) {
-							this.buy(tech.title);
+							this.buy(tech.name);
 							return;
 						}
 					}
@@ -297,17 +297,23 @@ function jda_busy_kittens_initialise() {
 				{
 					return; // avoid building when game is paused or not working, but not when single stepping, since this leads to anomalies
 				}
-				if (gamePage.activeTabId !== "Bonfire") { return ; }
+				//if (gamePage.activeTabId !== "Bonfire") { return ; }
 				var candidate = this.findCandidate();
 				if (candidate === null) {
 					return;
 				}
-				x = $("div.btn:not(.disabled)>div:contains('" + candidate.label + "')");
-				if (x.length > 0) {
+				var x = gamePage.tabs[0].buttons.find(a => a.model.metadata !== undefined && a.model.metadata.name == candidate.name).domNode.click();
+				// x = $("div.btn:not(.disabled)>div:contains('" + candidate.label + "')");
+				if (x) {
 					x.click();
 					this.render_pending = true;
 					gamePage.msg('AutoBuild: ' + candidate.label, "notice", "autobuild");
 				}
+//				if (x.length > 0) {
+//					x.click();
+//					this.render_pending = true;
+//					gamePage.msg('AutoBuild: ' + candidate.label, "notice", "autobuild");
+//				}
 			},
 			groups: [],
 			rebuild_groups: function() {
@@ -572,11 +578,12 @@ function jda_busy_kittens_initialise() {
 				row.insertCell(-1).innerHTML = "RESERVED";
 				row.insertCell(-1).innerHTML = "PRODUCED";
 				for (var c in crafts) {
-					var unlocked = gamePage.workshop.getCraft(crafts[c].name);
-					if (unlocked === null) {
+					var realCraft = gamePage.workshop.getCraft(crafts[c].name);
+					var unlocked = false;
+					if (realCraft === null) {
 						unlocked = true;
 					} else {
-						unlocked = unlocked.unlocked; // sheesh!
+						unlocked = realCraft.unlocked; // sheesh!
 					}
 					this.crafts_data.list[c] = {
 						name: crafts[c].name,
@@ -595,8 +602,9 @@ function jda_busy_kittens_initialise() {
 					// create element for this craft
 					row = tab.insertRow(-1);
 					row.insertCell(-1).innerHTML = c;
-					
-					if (crafts[c].craftable !== undefined && crafts[c].craftable === true) {
+					console.log("trying to create checkbox for craft: ", realCraft.name);
+					if (realCraft !== null) {
+						console.log("creating checkbox for
 						var avail = document.createElement("input");
 						avail.type = "checkbox";
 						avail.cd = this.crafts_data.list[c];
@@ -803,7 +811,7 @@ function jda_busy_kittens_initialise() {
 	game.console.static.filters["autobuild"] = { title: "Auto-Build", enabled: true, unlocked: true };
 	game.console.static.filters["autoscience"] = { title: "Auto-Science", enabled: true, unlocked: true };
 	game.console.static.filters["autoworkshop"] = { title: "Auto-Workshop", enabled: true, unlocked: true };
-	game.console.static.renderFilters();
+	// game.console.static.renderFilters();
 }
 
 if (window.jda_busy_kittens === undefined) {
