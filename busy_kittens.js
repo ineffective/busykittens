@@ -26,7 +26,7 @@ function jda_busy_kittens_initialise() {
 			getTimeToProduce: function(res_needed) {
 				var max_time = 0;
 				for (var x in res_needed) {
-					var res_time = getTimeToProduceSingle(res_needed[x]);
+					var res_time = this.getTimeToProduceSingle(res_needed[x]);
 					max_time = Math.max(res_time, max_time);
 				}
 				return max_time;
@@ -47,7 +47,7 @@ function jda_busy_kittens_initialise() {
 					var time_needed = Math.ceil((needed - res) / prod);
 					// now, if time is less then res_time, which is max time, we should reserve '(res_time - time_needed) * prod' less
 					// resource than we originally thought
-					if (time_needed > 0 && time_needed < res_time) {
+					if (time_needed < res_time) {
 						var tmp = (res_time - time_needed) * prod;
 						if (isNaN(tmp)) {
 							tmp = 0;
@@ -55,7 +55,7 @@ function jda_busy_kittens_initialise() {
 						needed -= tmp;
 						if (needed < 0) { needed = 0; }
 					}
-					if (local_res[a[x].name] === undefined || local_res[a[x].name] < needed) {
+					if (local_res[a[x].name] === undefined || local_res[a[x].name].amt < needed) {
 						local_res[a[x].name] = { amt: needed, what: checkName };
 					}
 					if (glob_res[a[x].name] !== undefined) {
@@ -181,7 +181,7 @@ function jda_busy_kittens_initialise() {
 				}
 				gamePage.rate = r;
 				$('#gamespeedcurrentrate').html(gamePage.rate);
-				$('#targetmsperframe').html(1000 / gamePage.rate);
+				$('#targetmsperframe').html((1000 / gamePage.rate).toFixed(2));
 				if (gamePage.worker !== undefined) {
 					gamePage.worker.terminate();
 					gamePage.start();
@@ -256,6 +256,10 @@ function jda_busy_kittens_initialise() {
 			global_reserved_resources: { },
 			reset_reserved_resources: function() {
 				this.global_reserved_resources = { };
+			},
+			getGlobReserv: function(name) {
+				var tmp = this.global_reserved_resources[name];
+				return tmp === undefined ? {} : tmp;
 			},
 			update_reserved_resources: function(reserve) {
 				for (y in reserve) {
@@ -396,7 +400,7 @@ function jda_busy_kittens_initialise() {
 				}
 				// now, update reserved resources
 				for (b in this.global_reserved_resources) {
-					this.crafts_data.by_name[b].reserved.innerHTML = this.global_reserved_resources[b].amt.toFixed(0) + " (" + this.global_reserved_resources[b].what + ")";
+					this.crafts_data.by_name[b].reserved.innerHTML = this.getGlobReserv(b).amt.toFixed(0) + " (" + this.getGlobReserv(b).what + ")";
 				}
 			},
 			group_up: function(y) {
@@ -480,10 +484,6 @@ function jda_busy_kittens_initialise() {
 				if (this.do_auto_craft === false) {
 					return;
 				}
-				// if do_auto_build is false, structure construction is not requested. so reset global_reserved_resources to 0, so anything can be crafted.
-//				if (this.do_auto_build === false && jda_busy_kittens.workshop.auto === false && jda_busy_kittens.science.auto === false) {
-//					this.global_reserved_resources = { };
-//				}
 				// this function scans available crafts and compares them with global_reserved_resources. Since global_reserved_resources
 				// keeps maximum of resource required for all buildings (i.e. if we have: library 100 wood, workshop 400 minerals and 150 wood,
 				// and smelter 500 minerals, values stored are wood 150 and minerals 500), we can craft everything over these limits. This will
@@ -494,10 +494,12 @@ function jda_busy_kittens_initialise() {
 				var r = gamePage.resPool.resources;
 				for (var x in r) {
 					var have = r[x].value - this.crafts_data.get_limit(r[x].name);
-					var need = this.global_reserved_resources[r[x].name];
+					var need = this.getGlobReserv(r[x].name).amt;
 					need = (need === undefined ? 0 : need);
 					if (have > 0 && have > need) {
 						available[r[x].name] = have - need;
+					} else {
+						available[r[x].name] = 0;
 					}
 				}
 				var crafts = gamePage.workshop.crafts;
@@ -522,7 +524,9 @@ function jda_busy_kittens_initialise() {
 							break; // nothing to do here
 						}
 					}
-					if (toCraft !== Infinity && toCraft > 0 && toCraft !== undefined) {
+					if (toCraft === Infinity || toCraft === undefined) {
+						this.crafts_data.by_name[crafts[c].name].produced.innerHTML = "inf/undef: " + toCraft;
+					} else if (toCraft > 0 ) {
 						var pre = gamePage.resPool.get(crafts[c].name).value;
 						gamePage.craft(crafts[c].name, toCraft);
 						var post = gamePage.resPool.get(crafts[c].name).value;
@@ -673,6 +677,25 @@ function jda_busy_kittens_initialise() {
 			do_auto_craft: false,
 			timingtable: [],
 			timecumulative: 0,
+			timings: {
+				calculate: function(delta) {
+					var times = [];
+					for (var i in this.tabs) {
+						this.tabs[i].tab.push(delta);
+						this.tabs[i].cum += delta;
+						if (this.tabs[i].tab.length > this.tabs[i].cnt) {
+							this.tabs[i].cum -= this.tabs[i].tab.shift();
+						}
+						times.push((this.tabs[i].cum / this.tabs[i].tab.length).toFixed(2));
+					}
+					return times.join(" / ");
+				},
+				tabs: [
+					{ tab: [], cum: 0, cnt: 20},
+					{ tab: [], cum: 0, cnt: 100 },
+					{ tab: [], cum: 0, cnt: 1000 },
+				]
+			},
 			register_tick_handler: function() {
 				gamePage.originalTick = gamePage.tick;
 				gamePage.tick = function() {
@@ -688,12 +711,7 @@ function jda_busy_kittens_initialise() {
 					jda_busy_kittens.build.craft(); // and that crafting is more important than praising sun - ok, that's not true, but 
 					jda_busy_kittens.praiseSun.praise();
 					var delta = performance.now() - startTime;
-					jda_busy_kittens.build.timingtable.push(delta);
-					jda_busy_kittens.build.timecumulative += delta;
-					if (jda_busy_kittens.build.timingtable.length > 20) {
-						jda_busy_kittens.build.timecumulative -= jda_busy_kittens.build.timingtable.shift();
-					}
-					$('#realmsperframe').html((jda_busy_kittens.build.timecumulative / jda_busy_kittens.build.timingtable.length).toFixed(2) + " (" + jda_busy_kittens.build.timingtable.length + " measurements)" );
+					$('#realmsperframe').html(jda_busy_kittens.build.timings.calculate(delta)); //(jda_busy_kittens.build.timecumulative / jda_busy_kittens.build.timingtable.length).toFixed(2) + " (" + jda_busy_kittens.build.timingtable.length + " measurements)" );
 				};
 			},
 			autoObserve: false,
@@ -800,7 +818,7 @@ function jda_busy_kittens_initialise() {
 			},
 			make_speed_control: function() {
 				var info = '<br><div style="border-style:solid; border-width: 1px; border-radius: 3px; margin: 3px;padding:5px;display:inline-block;">' +
-					'Target ms per frame: <div id="targetmsperframe" /> Real ms per frame: <div id="realmsperframe"/>' +
+					'Target ms per frame: <span id="targetmsperframe">200</span> Real ms per frame: <span id="realmsperframe"/>' +
 					'</div>';
 				return '<div style="border-style: solid; border-width: 1px; border-radius: 3px; margin: 3px;padding:5px;display:inline-block;">' + 
 					'<input type="button" value="+10" href="#" onclick="jda_busy_kittens.speed.change(10);">' + 
