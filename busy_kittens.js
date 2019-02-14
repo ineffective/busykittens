@@ -14,17 +14,19 @@ function jda_busy_kittens_initialise() {
 				return (prod === undefined) ? 0 : prod;
 			},
 			// this function calculates time needed to produce required amount of resource
+			getTimeToProduceSingle: function(res) {
+				var needed  = res.val;
+				var res_has = this.getResCurrAmt(res.name);
+				var res_max = this.getResMaxAmt(res.name);
+				if (resMax != 0 && res_max < needed) {
+					return Infinity;
+				}
+				return Math.ceil((needed - res_has) / this.resProdPerTick(res.name));
+			},
 			getTimeToProduce: function(res_needed) {
 				var max_time = 0;
 				for (var x in res_needed) {
-					var res = res_needed[x];
-					var needed = res.val;
-					var res_has = this.getResCurrAmt(res.name);
-					var res_max = this.getResMaxAmt(res.name);
-					if (resMax != 0 && res_max < needed) {
-						return Infinity;
-					}
-					var res_time = Math.ceil((needed - res_has) / this.resProdPerTick(res.name));
+					var res_time = getTimeToProduceSingle(res_needed[x]);
 					max_time = Math.max(res_time, max_time);
 				}
 				return max_time;
