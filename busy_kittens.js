@@ -261,10 +261,11 @@ function jda_busy_kittens_initialise() {
 				for (y in reserve) {
 					if (this.global_reserved_resources[y] === undefined) {
 						this.global_reserved_resources[y] = reserve[y];
-					} else {
-						var r = this.global_reserved_resources[y];
-						this.global_reserved_resources[y].amt += reserve[y].amt;
-						this.global_reserved_resources[y].what = this.global_reserved_resources[y].what + ", " + reserve[y].what;
+//					} else {
+//						var r = this.global_reserved_resources[y];
+//						if (r.
+//						this.global_reserved_resources[y].amt += reserve[y].amt;
+//						this.global_reserved_resources[y].what = this.global_reserved_resources[y].what + ", " + reserve[y].what;
 					}
 				}
 			},
@@ -480,9 +481,9 @@ function jda_busy_kittens_initialise() {
 					return;
 				}
 				// if do_auto_build is false, structure construction is not requested. so reset global_reserved_resources to 0, so anything can be crafted.
-				if (this.do_auto_build === false && jda_busy_kittens.workshop.auto === false && jda_busy_kittens.science.auto === false) {
-					this.global_reserved_resources = { };
-				}
+//				if (this.do_auto_build === false && jda_busy_kittens.workshop.auto === false && jda_busy_kittens.science.auto === false) {
+//					this.global_reserved_resources = { };
+//				}
 				// this function scans available crafts and compares them with global_reserved_resources. Since global_reserved_resources
 				// keeps maximum of resource required for all buildings (i.e. if we have: library 100 wood, workshop 400 minerals and 150 wood,
 				// and smelter 500 minerals, values stored are wood 150 and minerals 500), we can craft everything over these limits. This will
