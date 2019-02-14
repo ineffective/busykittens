@@ -4,6 +4,7 @@ function jda_busy_kittens_initialise() {
 			// this checks if building can be built. it also adds resources required to dict 'reserved_res'
 			// getResCurrAmt: get current amount of resource
 			getResCurrAmt: function(name) { return gamePage.resPool.get(name).value; }, // CHECKED
+			getResMaxAmt:  function(name) { return gamePage.resPool.get(name).maxValue; },
 			// resProdPerTick: get resource production per tick
 			resProdPerTick: function(name) {
 				var prod = gamePage.resPool.get(name).perTickCached; // CHECKED
@@ -19,12 +20,16 @@ function jda_busy_kittens_initialise() {
 					var res = res_needed[x];
 					var needed = res.val;
 					var res_has = this.getResCurrAmt(res.name);
+					var res_max = this.getResMaxAmt(res.name);
+					if (resMax != 0 && res_max < needed) {
+						return Infinity;
+					}
 					var res_time = Math.ceil((needed - res_has) / this.resProdPerTick(res.name));
 					max_time = Math.max(res_time, max_time);
 				}
 				return max_time;
 			},
-			checkBuyOrReserveResources: function(prices, glob_res, local_res) {
+			checkBuyOrReserveResources: function(checkName, prices, glob_res, local_res) {
 				var rv = true; // by default assume that building can be built
 				var a = prices;//this.buildings[name].needed;
 				var res_time = this.getTimeToProduce(a);
@@ -34,12 +39,13 @@ function jda_busy_kittens_initialise() {
 				for (x in a) {
 					var needed = a[x].val; // amount of resources needed for construction
 					var res = this.getResCurrAmt(a[x].name); // amount of resource available
+					var resMax = this.getResMaxAmt(a[x].name);
 					var prod = this.resProdPerTick(a[x].name); // amount of resource gained per tick
 					// now check how much time is needed to produce required amount of resource
 					var time_needed = Math.ceil((needed - res) / prod);
-					// now, if time is less then res_time, which is max time, we should reserve (res_time - time_needed) * prod less
+					// now, if time is less then res_time, which is max time, we should reserve '(res_time - time_needed) * prod' less
 					// resource than we originally thought
-					if (time_needed < res_time) {
+					if (time_needed > 0 && time_needed < res_time) {
 						var tmp = (res_time - time_needed) * prod;
 						if (isNaN(tmp)) {
 							tmp = 0;
@@ -48,12 +54,12 @@ function jda_busy_kittens_initialise() {
 						if (needed < 0) { needed = 0; }
 					}
 					if (local_res[a[x].name] === undefined || local_res[a[x].name] < needed) {
-						local_res[a[x].name] = needed;
+						local_res[a[x].name] = { amt: needed, what: checkName };
 					}
 					if (glob_res[a[x].name] !== undefined) {
 						// return false only if after buying this structure (res - needed < glob_res[a[x].name])
 						// we'll be left with less resources than required for higher priority structure
-						if (res - needed < glob_res[a[x].name]) {
+						if (res - needed < glob_res[a[x].name].amt) {
 							rv = false;
 						}
 					} else {
@@ -86,7 +92,7 @@ function jda_busy_kittens_initialise() {
 					var upg = gamePage.workshop.get(gamePage.workshop.upgrades[x].name);
 					if (upg.unlocked && !upg.researched) {
 						// check prices and buy or reserve
-						if (jda_busy_kittens.prices.checkBuyOrReserveResources(upg.prices, jda_busy_kittens.build.global_reserved_resources, local_reserved_resources)) {
+						if (jda_busy_kittens.prices.checkBuyOrReserveResources(upg.name, upg.prices, jda_busy_kittens.build.global_reserved_resources, local_reserved_resources)) {
 							this.buy(upg.name); // CHECKED
 							return;
 						}
@@ -118,7 +124,7 @@ function jda_busy_kittens_initialise() {
 					var tech = gamePage.science.techs[x];
 					if (tech.unlocked && !tech.researched) {
 						var prices = gamePage.science.getPrices(tech);
-						if (jda_busy_kittens.prices.checkBuyOrReserveResources(prices, jda_busy_kittens.build.global_reserved_resources, local_reserved_resources)) {
+						if (jda_busy_kittens.prices.checkBuyOrReserveResources(tech.name, prices, jda_busy_kittens.build.global_reserved_resources, local_reserved_resources)) {
 							this.buy(tech.name);
 							return;
 						}
@@ -173,6 +179,7 @@ function jda_busy_kittens_initialise() {
 				}
 				gamePage.rate = r;
 				$('#gamespeedcurrentrate').html(gamePage.rate);
+				$('#targetmsperframe').html(1000 / gamePage.rate);
 				if (gamePage.worker !== undefined) {
 					gamePage.worker.terminate();
 					gamePage.start();
@@ -217,27 +224,29 @@ function jda_busy_kittens_initialise() {
 				for (x in bd) {
 					var nm = bd[x].name;
 					if (bd[x].unlocked) { // if building is unlocked and not on the buildings list, put it there
+						var lab = ((bd[x].stages !== undefined)? bd[x].stages[bd[x].stage || 0].label : bd[x].label);
+						if (lab === undefined) {
+							console.log("can't get label for building ", bd[x].name);
+							lab = nm;
+						}
 						if (this.buildings[nm] === undefined) {
 							this.buildings[nm] = {
 								name: nm,
-								label: ((bd[x].upgradable === true )? bd[x].stages[bd[x].stage || 0].label : bd[x].label),
+								label: lab,
 								group: 0,
 								stage: 0,
 								unlocked: true,
-								// count: gamePage.bld.get(nm).val,
 								limited: false,
 								needed: gamePage.bld.getPrices(nm) };
-								this.render_pending = true;
-						} else if (bd[x].upgradable === true && bd[x].stage != this.buildings[nm].stage) {
-							this.buildings[nm].label = ((bd[x].upgradable === true )? bd[x].stages[bd[x].stage || 0].label : bd[x].label);
+							this.render_pending = true;
+						} else if (bd[x].stages !== undefined && bd[x].stage != this.buildings[nm].stage) {
+							this.buildings[nm].label = lab; //((bd[x].stages !== undefined)? bd[x].stages[bd[x].stage || 0].label : bd[x].label);
 							this.buildings[nm].stage = bd[x].stage;
 						}
 						this.buildings[nm].unlocked = true;
 					} else { // if buildings isn't unlocked but for some reason is on the list, remove
 						if (this.buildings[nm] !== undefined) {
-//							delete this.buildings[nm];
 							this.buildings[nm].unlocked = false;
-							// this.render_pending = true;
 						}
 					}
 				}
@@ -251,7 +260,9 @@ function jda_busy_kittens_initialise() {
 					if (this.global_reserved_resources[y] === undefined) {
 						this.global_reserved_resources[y] = reserve[y];
 					} else {
-						this.global_reserved_resources[y] += reserve[y];
+						var r = this.global_reserved_resources[y];
+						this.global_reserved_resources[y].amt += reserve[y].amt;
+						this.global_reserved_resources[y].what = this.global_reserved_resources[y].what + ", " + reserve[y].what;
 					}
 				}
 			},
@@ -278,7 +289,7 @@ function jda_busy_kittens_initialise() {
 						if (g.list[i].limited || g.list[i].unlocked !== true) {
 							continue;
 						}
-						if (jda_busy_kittens.prices.checkBuyOrReserveResources(this.buildings[g.list[i].name].needed, this.global_reserved_resources, local_reserved_resources) !== true) {
+						if (jda_busy_kittens.prices.checkBuyOrReserveResources(g.list[i].name, this.buildings[g.list[i].name].needed, this.global_reserved_resources, local_reserved_resources) !== true) {
 							continue;
 						}
 						if (rv === null) {
@@ -297,23 +308,25 @@ function jda_busy_kittens_initialise() {
 				{
 					return; // avoid building when game is paused or not working, but not when single stepping, since this leads to anomalies
 				}
-				//if (gamePage.activeTabId !== "Bonfire") { return ; }
 				var candidate = this.findCandidate();
 				if (candidate === null) {
+					$('#jdabkBldCand').html("null");
 					return;
 				}
-				var x = gamePage.tabs[0].buttons.find(a => a.model.metadata !== undefined && a.model.metadata.name == candidate.name).domNode.click();
-				// x = $("div.btn:not(.disabled)>div:contains('" + candidate.label + "')");
+				if (gamePage.tabs[0].domNode.classList.contains('activeTab') !== true)
+				{
+					$('#jdabkBldCand').html("NOT ON BONFIRE TAB, WOULD BUILD: " + candidate.name);
+					return ;
+				}
+				$('#jdabkBldCand').html(candidate.name);
+				var x = gamePage.tabs[0].buttons.find(a => a.model.metadata !== undefined && a.model.metadata.name == candidate.name).domNode;
 				if (x) {
 					x.click();
 					this.render_pending = true;
 					gamePage.msg('AutoBuild: ' + candidate.label, "notice", "autobuild");
+				} else {
+					console.log("was trying to autobuild ", candidate.name ," but nothing came.");
 				}
-//				if (x.length > 0) {
-//					x.click();
-//					this.render_pending = true;
-//					gamePage.msg('AutoBuild: ' + candidate.label, "notice", "autobuild");
-//				}
 			},
 			groups: [],
 			rebuild_groups: function() {
@@ -380,7 +393,7 @@ function jda_busy_kittens_initialise() {
 				}
 				// now, update reserved resources
 				for (b in this.global_reserved_resources) {
-					this.crafts_data.by_name[b].reserved.innerHTML = this.global_reserved_resources[b].toFixed(0);
+					this.crafts_data.by_name[b].reserved.innerHTML = this.global_reserved_resources[b].amt.toFixed(0) + " (" + this.global_reserved_resources[b].what + ")";
 				}
 			},
 			group_up: function(y) {
@@ -602,10 +615,10 @@ function jda_busy_kittens_initialise() {
 					// create element for this craft
 					row = tab.insertRow(-1);
 					row.insertCell(-1).innerHTML = c;
-					console.log("trying to create checkbox for craft: ", realCraft.name);
 					if (realCraft !== null) {
-						console.log("creating checkbox for
 						var avail = document.createElement("input");
+						avail.className = "jdachbox";
+						avail.style = "display: unset";
 						avail.type = "checkbox";
 						avail.cd = this.crafts_data.list[c];
 						avail.checked = this.crafts_data.list[c].allowed;
@@ -613,7 +626,8 @@ function jda_busy_kittens_initialise() {
 							jda_busy_kittens.build.crafts_data.list[num].allowed = this.checked;
 							jda_busy_kittens.build.save_crafts();
 						}}(c));
-						$(row.insertCell(-1)).append(avail);
+						var cl = row.insertCell(-1);
+						$(cl).append(avail);
 					} else {
 						row.style["display"] = (this.usedInCraft(crafts[c].name) ? "" : "none");
 						row.insertCell(-1);
@@ -654,9 +668,12 @@ function jda_busy_kittens_initialise() {
 				}
 			},
 			do_auto_craft: false,
+			timingtable: [],
+			timecumulative: 0,
 			register_tick_handler: function() {
 				gamePage.originalTick = gamePage.tick;
 				gamePage.tick = function() {
+					var startTime = performance.now();
 					gamePage.originalTick();
 					if (jda_busy_kittens.build.autoObserve === true) {
 						$('#observeBtn').click();
@@ -667,6 +684,13 @@ function jda_busy_kittens_initialise() {
 					jda_busy_kittens.build.build(); // and that building things is more important than crafting
 					jda_busy_kittens.build.craft(); // and that crafting is more important than praising sun - ok, that's not true, but 
 					jda_busy_kittens.praiseSun.praise();
+					var delta = performance.now() - startTime;
+					jda_busy_kittens.build.timingtable.push(delta);
+					jda_busy_kittens.build.timecumulative += delta;
+					if (jda_busy_kittens.build.timingtable.length > 20) {
+						jda_busy_kittens.build.timecumulative -= jda_busy_kittens.build.timingtable.shift();
+					}
+					$('#realmsperframe').html((jda_busy_kittens.build.timecumulative / jda_busy_kittens.build.timingtable.length).toFixed(2) + " (" + jda_busy_kittens.build.timingtable.length + " measurements)" );
 				};
 			},
 			autoObserve: false,
@@ -753,6 +777,7 @@ function jda_busy_kittens_initialise() {
 				$(btn2).on("click", function() { jda_busy_kittens.build.toggle_craft_table(this); });
 				$(btn2).css("box-sizing", "border-box").css("float", "left");
 				$(mydiv).append('<div style="clear: both">');
+				$('#autoDivCont').append('<div id="jdabkBldCand" />');
 				$('#autoDivCont').append('<div id="jda_busy_kittens_craft_table"/>');
 				
 				var mydiv2 = document.createElement("div");
@@ -771,6 +796,9 @@ function jda_busy_kittens_initialise() {
 				this.load_csses();
 			},
 			make_speed_control: function() {
+				var info = '<br><div style="border-style:solid; border-width: 1px; border-radius: 3px; margin: 3px;padding:5px;display:inline-block;">' +
+					'Target ms per frame: <div id="targetmsperframe" /> Real ms per frame: <div id="realmsperframe"/>' +
+					'</div>';
 				return '<div style="border-style: solid; border-width: 1px; border-radius: 3px; margin: 3px;padding:5px;display:inline-block;">' + 
 					'<input type="button" value="+10" href="#" onclick="jda_busy_kittens.speed.change(10);">' + 
 					'<input type="button" value="+5" href="#" onclick="jda_busy_kittens.speed.change(5);">' + 
@@ -781,7 +809,7 @@ function jda_busy_kittens_initialise() {
 					'<input  type="button" href="#" value="-1" onclick="jda_busy_kittens.speed.change(-1);">' +
 					'<input  type="button" href="#" value="-5" onclick="jda_busy_kittens.speed.change(-5);">' +
 					'<input  type="button" href="#" value="-10" onclick="jda_busy_kittens.speed.change(-10);">' +
-					'&nbsp;&nbsp;&nbsp;<input type="button" href="#" value="RESET" onclick="jda_busy_kittens.speed.reset();"></div>';
+					'&nbsp;&nbsp;&nbsp;<input type="button" href="#" value="RESET" onclick="jda_busy_kittens.speed.reset();"></div>' + info;
 			},
 			make_toggle_button: function(name_on, name_off, target, target_var) {
 				var butt = document.createElement("div");
