@@ -5,22 +5,37 @@ function jda_busy_kittens_initialise() {
 			// getResCurrAmt: get current amount of resource
 			getResCurrAmt: function(name) { return gamePage.resPool.get(name).value; }, // CHECKED
 			getResMaxAmt:  function(name) { return gamePage.resPool.get(name).maxValue; },
-			// resProdPerTick: get resource production per tick
+			// get resource production per tick
 			resProdPerTick: function(name) {
 				var prod = gamePage.resPool.get(name).perTickCached; // CHECKED
-				if (prod === undefined || prod == 0) {
-					prod = jda_busy_kittens.build.crafts_data.by_name[name].produced_value;
+				// what the hell is this. I *think* it is an attempt at simulating production
+				// using crafted values, but I don't think it reall works.
+				if (prod === undefined || prod < 0) {
+					prod = (name == 'furs') ? jda_busy_kittens.fursPerCatpower : Nan;
 				}
-				return (prod === undefined) ? 0 : prod;
+				if (prod == 0) {
+					// check if resource is craftable, if yes, calcluate.
+					if (gamePage.workshop.getCraft(name) !== null && gamePage.workshop.getCraft(name).unlocked) {
+						var times = [];
+						var prices = gamePage.workshop.getCraft(name).prices;
+						for (var x in prices) {
+							times.push((prices[x].val / this.resProdPerTick(prices[x].name)) / gamePage.getCraftRatio(prices[x]));
+						}
+						prod = Math.max(...times);
+					}
+				}
+				return prod; 
 			},
 			// this function calculates time needed to produce required amount of resource
 			getTimeToProduceSingle: function(res) {
 				var needed  = res.val;
 				var res_has = this.getResCurrAmt(res.name);
 				var res_max = this.getResMaxAmt(res.name);
-				if (resMax != 0 && res_max < needed) {
+				if (res_max != 0 && res_max < needed) {
 					return Infinity;
 				}
+				// if we're here, it means that resource is not limited by storage, BUT there is still possibility
+				// that it is craftable. This is handled in resProdPerTick.
 				return Math.ceil((needed - res_has) / this.resProdPerTick(res.name));
 			},
 			getTimeToProduce: function(res_needed) {
@@ -31,17 +46,36 @@ function jda_busy_kittens_initialise() {
 				}
 				return max_time;
 			},
+			// this.reserve(local_res, a[x].name, needed, checkName, Math.max(a[x].val - res, 0));
+			reserve: function(res, name, need, what, req) {
+				if (need == 0 && req == 0) {
+					return;
+				}
+				var c = gamePage.workshop.getCraft(name.name);
+				if (c !== null) {
+					c.prices.forEach(p => jda_busy_kittens.prices.reserve(res, p, (need * p.val) / (1 + gamePage.getCraftRatio(name)), what, (req * p.val) / (1 + gamePage.getCraftRatio(name))));
+				}
+				if (res[name] === undefined) {
+					res[name.name] = { amt: need, what: [what], req: req };
+				} else {
+					if (res[name.name].what.indexOf(what) === -1) {
+						res[name.name].what.push(what);
+					}
+					res[name.name].amt += need;
+					res[name.name].req += req;
+				}
+				//local_res[a[x].name] = { amt: needed, what: checkName, req: Math.max(a[x].val - res, 0) };
+			},
 			checkBuyOrReserveResources: function(checkName, prices, glob_res, local_res) {
-				var rv = true; // by default assume that building can be built
 				var a = prices;//this.buildings[name].needed;
 				var res_time = this.getTimeToProduce(a);
-				if (res_time == Infinity) {
+				if (res_time == Infinity || isNaN(res_time)) {
 					return false; // resource won't be ever built, since production is most probably 0
 				}
-				for (x in a) {
+				for (var x in a) {
 					var needed = a[x].val; // amount of resources needed for construction
 					var res = this.getResCurrAmt(a[x].name); // amount of resource available
-					var resMax = this.getResMaxAmt(a[x].name);
+					//var resMax = this.getResMaxAmt(a[x].name);
 					var prod = this.resProdPerTick(a[x].name); // amount of resource gained per tick
 					// now check how much time is needed to produce required amount of resource
 					var time_needed = Math.ceil((needed - res) / prod);
@@ -49,28 +83,18 @@ function jda_busy_kittens_initialise() {
 					// resource than we originally thought
 					if (time_needed < res_time) {
 						var tmp = (res_time - time_needed) * prod;
-						if (isNaN(tmp)) {
-							tmp = 0;
-						}
-						needed -= tmp;
-						if (needed < 0) { needed = 0; }
+						needed = Math.max(needed - (isNaN(tmp) ? 0 : tmp), 0);
 					}
 					if (local_res[a[x].name] === undefined || local_res[a[x].name].amt < needed) {
-						local_res[a[x].name] = { amt: needed, what: checkName };
+						this.reserve(local_res, a[x], needed, checkName, Math.max(a[x].val - res, 0));
+						
 					}
-					if (glob_res[a[x].name] !== undefined) {
-						// return false only if after buying this structure (res - needed < glob_res[a[x].name])
-						// we'll be left with less resources than required for higher priority structure
-						if (res - needed < glob_res[a[x].name].amt) {
-							rv = false;
-						}
-					} else {
-						if (res < needed) {
-							rv = false;
-						}
-					}
+					// if after buying this structure we'll be left with less than globally reserved amount or if
+					// there is not enough resources to buy this if there are no global reservations, return false
+					var rv = glob_res[a[x].name] !== undefined ? ((res - needed < glob_res[a[x].name].amt) ? false : true) : res < needed ? false : true;
+					if (!rv) return false;
 				}
-				return rv;
+				return true;
 			}
 		},
 		workshop: {
@@ -135,11 +159,24 @@ function jda_busy_kittens_initialise() {
 				jda_busy_kittens.build.update_reserved_resources(local_reserved_resources);
 			}
 		},
+		totalFursHunted: 0,
+		totalCatpowerUsed: 0,
+		doHunt: function() {
+			var pref = gamePage.resPool.get('furs').value;
+			var preh = gamePage.resPool.get('manpower').value;
+			game.village.huntAll(); 
+			var postf = gamePage.resPool.get('furs').value;
+			var posth = gamePage.resPool.get('manpower').value;
+			this.totalFursHunted += postf - pref;
+			this.totalCatpowerUsed += preh - posth;
+			this.fursPerCatpower = this.totalFursHunted / this.totalCatpowerUsed;
+			$('#furspersecond').text(this.fursPerCatpower.toFixed(2));
+		},
 		hunt: {
 			auto: false,
 			toggle: function() {
 				if (this.huntInterval === null) {
-					this.huntInterval = setInterval(function() { game.village.huntAll(); }, this.huntMillis);
+					this.huntInterval = setInterval(function() { jda_busy_kittens.doHunt();}, this.huntMillis);
 				} else {
 					clearInterval(this.huntInterval);
 					this.huntInterval = null;
@@ -163,12 +200,10 @@ function jda_busy_kittens_initialise() {
 			paused: false,
 			toggle: function () {
 				if (this.paused === true) {
-					console.log("starting game");
 					gamePage.start();
 					this.paused = false;
 					$('#gamespeedplaystop').prop('value', "STOP");
 				} else {
-					console.log("pausing game");
 					gamePage.worker.terminate();
 					gamePage.worker = undefined;
 					this.paused = true;
@@ -205,7 +240,7 @@ function jda_busy_kittens_initialise() {
 		build: {
 			is_limited: function(building) { // check if max resources limit was hit, so no more buildings can be build
 				a = building.needed;
-				for (x in a) {
+				for (var x in a) {
 					needed = a[x].val;
 					resMax = gamePage.resPool.get(a[x].name).maxValue;
 					if (resMax === 0) {
@@ -223,12 +258,11 @@ function jda_busy_kittens_initialise() {
 			render_pending: false,
 			rescan: function() {
 				var bd = gamePage.bld.buildingsData;
-				for (x in bd) {
+				for (var x in bd) {
 					var nm = bd[x].name;
 					if (bd[x].unlocked) { // if building is unlocked and not on the buildings list, put it there
 						var lab = ((bd[x].stages !== undefined)? bd[x].stages[bd[x].stage || 0].label : bd[x].label);
 						if (lab === undefined) {
-							console.log("can't get label for building ", bd[x].name);
 							lab = nm;
 						}
 						if (this.buildings[nm] === undefined) {
@@ -262,7 +296,7 @@ function jda_busy_kittens_initialise() {
 				return tmp === undefined ? {} : tmp;
 			},
 			update_reserved_resources: function(reserve) {
-				for (y in reserve) {
+				for (var y in reserve) {
 					if (this.global_reserved_resources[y] === undefined) {
 						this.global_reserved_resources[y] = reserve[y];
 //					} else {
@@ -331,8 +365,6 @@ function jda_busy_kittens_initialise() {
 					x.click();
 					this.render_pending = true;
 					gamePage.msg('AutoBuild: ' + candidate.label, "notice", "autobuild");
-				} else {
-					console.log("was trying to autobuild ", candidate.name ," but nothing came.");
 				}
 			},
 			groups: [],
@@ -382,7 +414,7 @@ function jda_busy_kittens_initialise() {
 					}
 					s += "<li><ul> GROUP " + x + "&nbsp;" + this.render_group_up_down_buttons(x);
 
-					for (b in this.groups[x].list) {
+					for (var b in this.groups[x].list) {
 						var bb = this.groups[x].list[b];
 						s += "<li><div style='inline-block;'> "+ this.render_building_group_up_down_buttons(bb.name) + "<span id='jdabld" +
 						bb.name + "span' class='" + (bb.limited ? 'limited ' : '') + (bb.unlocked ? '' : ' disabled') + "'>" +
@@ -397,10 +429,16 @@ function jda_busy_kittens_initialise() {
 				// first, reset reserved resources
 				for (var x in this.crafts_data.list) {
 					this.crafts_data.list[x].reserved.innerHTML = "0";
+					this.crafts_data.list[x].what.innerHTML = "";
+					this.crafts_data.list[x].req.innerHTML = "";
 				}
 				// now, update reserved resources
-				for (b in this.global_reserved_resources) {
-					this.crafts_data.by_name[b].reserved.innerHTML = this.getGlobReserv(b).amt.toFixed(0) + " (" + this.getGlobReserv(b).what + ")";
+				for (var b in this.global_reserved_resources) {
+					var crf = this.crafts_data.by_name[b];
+					var r = this.getGlobReserv(b);
+					crf.reserved.innerHTML = r.amt.toFixed(0);
+					crf.what.innerHTML = r.what;
+					crf.req.innerHTML = r.req.toFixed(2);//+ "/" + this.getGlobReserv(b).what + "/" + this.getGlobReserv(b).req.toFixed(2);
 				}
 			},
 			group_up: function(y) {
@@ -414,7 +452,7 @@ function jda_busy_kittens_initialise() {
 				}
 				if (this.groups[y + 1] !== undefined) {
 					l = this.groups[y + 1].list;
-					for (b in this.groups[y + 1].list) {
+					for (var b in this.groups[y + 1].list) {
 						l[b].group = y;
 					}
 				}
@@ -432,7 +470,7 @@ function jda_busy_kittens_initialise() {
 				}
 				if (this.groups[y - 1] !== undefined) {
 					l = this.groups[y - 1].list;
-					for (b in this.groups[y - 1].list) {
+					for (var b in this.groups[y - 1].list) {
 						l[b].group = y;
 					}
 				}
@@ -461,7 +499,7 @@ function jda_busy_kittens_initialise() {
 				this.render();
 			},
 			is_group_limited: function(group) {
-				for (x in group.list) {
+				for (var x in group.list) {
 					if (group.list[x].limited !== true) {
 						return false;
 					}
@@ -480,6 +518,26 @@ function jda_busy_kittens_initialise() {
 				s += "<a class='jdalnk' href='#' onclick='jda_busy_kittens.build.building_group_down(\"" + name + "\");'>-</a>&nbsp;";
 				return s;
 			},
+			getAvail: function(name, onReq) {
+				var r = gamePage.resPool;
+				var have = r.get(name).value;
+				return onReq ? have : this.available[name];
+			},
+			available: { },
+			calcAvail: function() {
+				this.available = { };
+				var r = gamePage.resPool.resources;
+				for (var x in r) {
+					var have = r[x].value - this.crafts_data.get_limit(r[x].name);
+					var need = this.getGlobReserv(r[x].name).amt;
+					need = (need === undefined ? 0 : need);
+					if (have > 0 && have > need) {
+						this.available[r[x].name] = have - need;
+					} else {
+						this.available[r[x].name] = 0;
+					}
+				}
+			},
 			craft: function(name) {
 				if (this.do_auto_craft === false) {
 					return;
@@ -490,32 +548,26 @@ function jda_busy_kittens_initialise() {
 				// do funny things for wood, since wood can be near maximum and making more from catnip will make more than we can store, but I'm
 				// not willing to fix it ATM.
 				// 'ere we go. first for each resource check how much we can 'sacrifice'
-				var available = { };
-				var r = gamePage.resPool.resources;
-				for (var x in r) {
-					var have = r[x].value - this.crafts_data.get_limit(r[x].name);
-					var need = this.getGlobReserv(r[x].name).amt;
-					need = (need === undefined ? 0 : need);
-					if (have > 0 && have > need) {
-						available[r[x].name] = have - need;
-					} else {
-						available[r[x].name] = 0;
-					}
-				}
 				var crafts = gamePage.workshop.crafts;
+				this.calcAvail();
 				for (var c in crafts) {
-					this.crafts_data.by_name[crafts[c].name].produced_value = 0;
-					this.crafts_data.by_name[crafts[c].name].produced.innerHTML = 0;
+					var cnam = crafts[c].name;
+					this.crafts_data.by_name[cnam].produced_value = 0;
+					this.crafts_data.by_name[cnam].produced.innerHTML = 0;
 					if (!crafts[c].unlocked) {
 						continue;
 					}
-					if (!this.crafts_data.by_name[crafts[c].name].allowed) {
+					// this tells us whether we are crafting on request.
+					var reqAmt = (this.getGlobReserv(cnam).req !== undefined) ? this.getGlobReserv(cnam).req : 0;
+					var onReq = reqAmt != 0;
+					// assume that we will craft infinite amount of resource, but...
+					var toCraft = reqAmt == 0 ? Infinity : reqAmt;
+					if (!onReq && !this.crafts_data.by_name[cnam].allowed) {
 						continue;
 					}
-					var toCraft = Infinity;
 					var prices = crafts[c].prices;
-					for (r in prices) {
-						var p = available[prices[r].name];
+					for (var r in prices) {
+						var p = this.getAvail(prices[r].name, onReq);
 						if (p !== undefined && p !== NaN && p > prices[r].val) {
 							var tmp = Math.floor(p / prices[r].val);
 							toCraft = (tmp < toCraft) ? tmp : toCraft;
@@ -524,19 +576,14 @@ function jda_busy_kittens_initialise() {
 							break; // nothing to do here
 						}
 					}
-					if (toCraft === Infinity || toCraft === undefined) {
-						this.crafts_data.by_name[crafts[c].name].produced.innerHTML = "inf/undef: " + toCraft;
-					} else if (toCraft > 0 ) {
+					if (toCraft > 0 ) {
 						var pre = gamePage.resPool.get(crafts[c].name).value;
 						gamePage.craft(crafts[c].name, toCraft);
 						var post = gamePage.resPool.get(crafts[c].name).value;
 						var diff = post - pre;
-						//var prod_str = "pre: " + pre + "<br>post: " + post + "<br>diff: " + diff + "<br>req: " + toCraft;
 						this.crafts_data.by_name[crafts[c].name].produced_value = diff;
-						this.crafts_data.by_name[crafts[c].name].produced.innerHTML = diff.toFixed(0);
-						for (r in prices) {
-							available[prices[r].name] -= toCraft * prices[r].val;
-						}
+						this.crafts_data.by_name[crafts[c].name].produced.innerHTML = diff.toFixed(2);
+						this.calcAvail();
 					}
 				}
 			},
@@ -568,8 +615,8 @@ function jda_busy_kittens_initialise() {
 			},
 			usedInCraft: function(name) {
 				var c = gamePage.workshop.crafts;
-				for (x in c) {
-					for (d in c[x].prices) {
+				for (var x in c) {
+					for (var d in c[x].prices) {
 						if (c[x].prices[d].name == name) {
 							return true;
 						}
@@ -595,8 +642,10 @@ function jda_busy_kittens_initialise() {
 				row.insertCell(-1).innerHTML = "USE";
 				row.insertCell(-1).innerHTML = "CRAFT";
 				row.insertCell(-1).innerHTML = "LIMIT";
-				row.insertCell(-1).innerHTML = "RESERVED";
-				row.insertCell(-1).innerHTML = "PRODUCED";
+				row.insertCell(-1).innerHTML = "RES";
+				row.insertCell(-1).innerHTML = "PROD";
+				row.insertCell(-1).innerHTML = "WHAT";
+				row.insertCell(-1).innerHTML = "REQ";
 				for (var c in crafts) {
 					var realCraft = gamePage.workshop.getCraft(crafts[c].name);
 					var unlocked = false;
@@ -661,6 +710,12 @@ function jda_busy_kittens_initialise() {
 					var produced_box = document.createElement("div");
 					cd.produced = produced_box;
 					$(row.insertCell(-1)).append(produced_box);
+					var what_box = document.createElement("div");
+					cd.what = what_box;
+					$(row.insertCell(-1)).append(what_box);
+					var req_box = document.createElement("div");
+					cd.req = req_box;
+					$(row.insertCell(-1)).append(req_box);
 				}
 				$("#jda_busy_kittens_craft_table").append(tab);
 			},
@@ -763,7 +818,7 @@ function jda_busy_kittens_initialise() {
 			build: function() {
 				$('#footerLinks').append(' | <a href="#" onclick="$(\'#autoDiv\').toggle();">BusyKittens</a>');
 				$('#importDiv').after('<div id="autoDiv" class="jda_help" style="display:none;">' +
-					'<div id="autoDivPane" style="width: 600px;overflow-x: hidden;">' +
+					'<div id="autoDivPane" style="width: 690px;overflow-x: hidden;">' +
 						'<div id="autoDivCont" ></div><br>' +
 					'</div>' + 
 				'</div>');
@@ -779,8 +834,8 @@ function jda_busy_kittens_initialise() {
 				var btn6 = this.make_toggle_button("Auto-Hunt is OFF", "Auto-hunt is ON", window.jda_busy_kittens.hunt, "auto");
 				$(btn6).on("click", function() { jda_busy_kittens.hunt.toggle(); });
 				$('#amdCont').append(btn6);
-				$('#amdCont').append('<div style="text-indent: 25px;">Send hunters every <input id="bkahmillis" style="display: inline;" type="number" value="2000" href="#"> milliseconds.<br>');
-				$('#amdCont').on("focusout", function() {
+				$('#amdCont').append('<div style="text-indent: 25px;">Send hunters every <input id="bkahmillis" style="display: inline;" type="number" value="2000" href="#"> ms (<span id="furspersecond">0</span> fpc).<br>');
+				$('#bkahmillis').on("focusout", function() {
 					jda_busy_kittens.hunt.huntMillis = parseInt(this.value, 10);
 					jda_busy_kittens.hunt.toggle();
 					jda_busy_kittens.hunt.toggle();
