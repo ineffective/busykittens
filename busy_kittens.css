@@ -1,7 +1,7 @@
 .jda_help {
 	position: absolute;
 	border: 1px solid black;
-	width: 600px;
+	width: 700px;
 	height: 90vh;
 
 	right: -0px;
@@ -17,7 +17,7 @@
 }
 
 .fully_shown {
-	width: 600px;
+	width: 700px;
 }
 
 .jdalnk  {
