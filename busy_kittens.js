@@ -11,7 +11,7 @@ function jda_busy_kittens_initialise() {
 				// what the hell is this. I *think* it is an attempt at simulating production
 				// using crafted values, but I don't think it reall works.
 				if (prod === undefined || prod < 0) {
-					prod = (name == 'furs') ? jda_busy_kittens.fursPerCatpower : Nan;
+					prod = (name == 'furs') ? jda_busy_kittens.fursPerCatpower : NaN;
 				}
 				if (prod == 0) {
 					// check if resource is craftable, if yes, calcluate.
@@ -46,6 +46,32 @@ function jda_busy_kittens_initialise() {
 				}
 				return max_time;
 			},
+			// prices is prices to expand, exp is expanded prices
+			_expandPrices: function(prices, exp) {
+				for (var p in prices) {
+					var res = prices[p];
+					var craft = gamePage.workshop.getCraft(res.name);
+					if (craft !== null) {
+						this._expandPrices(
+							craft.prices.map(a => { return { name: a.name, val: res.val * a.val / gamePage.getCraftRatio(res.name) }}),
+							exp);
+					} 
+					if (exp[res.name] !== undefined) {
+						exp[res.name].val += res.val;
+					} else {
+						exp[res.name] = res;
+					}
+				}
+			},
+			expandPrices: function(prices) {
+				var expPrices = [];
+				this._expandPrices(prices, expPrices);
+				var ret = [];
+				for (var x in expPrices) {
+					ret.push(expPrices[x]);
+				}
+				return ret;
+			},
 			// this.reserve(local_res, a[x].name, needed, checkName, Math.max(a[x].val - res, 0));
 			reserve: function(res, name, need, what, req) {
 				if (need == 0 && req == 0) {
@@ -53,7 +79,10 @@ function jda_busy_kittens_initialise() {
 				}
 				var c = gamePage.workshop.getCraft(name.name);
 				if (c !== null) {
-					c.prices.forEach(p => jda_busy_kittens.prices.reserve(res, p, (need * p.val) / (1 + gamePage.getCraftRatio(name)), what, (req * p.val) / (1 + gamePage.getCraftRatio(name))));
+					
+					c.prices.forEach(p => {
+						var r = (req * p.val) / (1 + gamePage.getCraftRatio(name));
+						jda_busy_kittens.prices.reserve(res, p, r, what, r); });
 				}
 				if (res[name] === undefined) {
 					res[name.name] = { amt: need, what: [what], req: req };
@@ -64,10 +93,13 @@ function jda_busy_kittens_initialise() {
 					res[name.name].amt += need;
 					res[name.name].req += req;
 				}
-				//local_res[a[x].name] = { amt: needed, what: checkName, req: Math.max(a[x].val - res, 0) };
 			},
 			checkBuyOrReserveResources: function(checkName, prices, glob_res, local_res) {
-				var a = prices;//this.buildings[name].needed;
+				var a = prices; //this.expandPrices(prices);//this.buildings[name].needed;
+				var need_prices = dojo.clone(a);
+				for (var x in need_prices) {
+					need_prices[x].val = Math.max(0, need_prices[x].val - this.getResCurrAmt(a[x].name));
+				}
 				var res_time = this.getTimeToProduce(a);
 				if (res_time == Infinity || isNaN(res_time)) {
 					return false; // resource won't be ever built, since production is most probably 0
@@ -75,7 +107,6 @@ function jda_busy_kittens_initialise() {
 				for (var x in a) {
 					var needed = a[x].val; // amount of resources needed for construction
 					var res = this.getResCurrAmt(a[x].name); // amount of resource available
-					//var resMax = this.getResMaxAmt(a[x].name);
 					var prod = this.resProdPerTick(a[x].name); // amount of resource gained per tick
 					// now check how much time is needed to produce required amount of resource
 					var time_needed = Math.ceil((needed - res) / prod);
@@ -87,7 +118,6 @@ function jda_busy_kittens_initialise() {
 					}
 					if (local_res[a[x].name] === undefined || local_res[a[x].name].amt < needed) {
 						this.reserve(local_res, a[x], needed, checkName, Math.max(a[x].val - res, 0));
-						
 					}
 					// if after buying this structure we'll be left with less than globally reserved amount or if
 					// there is not enough resources to buy this if there are no global reservations, return false
